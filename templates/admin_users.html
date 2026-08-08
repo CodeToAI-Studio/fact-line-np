@@ -1,0 +1,133 @@
+{% extends "admin_base.html" %}
+
+{% block title %}User Management{% endblock %}
+{% block page_title %}Admin Users{% endblock %}
+
+{% block content %}
+<div class="admin-card">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px">
+        <h2 style="margin:0">Admin Users ({{ users|length }})</h2>
+        <button onclick="document.getElementById('create-user-form').style.display='block'" class="btn btn-primary">+ Add User</button>
+    </div>
+
+    {% if success %}
+    <div class="alert alert-success">{{ success }}</div>
+    {% endif %}
+
+    {% if error %}
+    <div class="alert alert-error">{{ error }}</div>
+    {% endif %}
+
+    <div id="create-user-form" style="display:none; background:var(--bg); padding:20px; border-radius:8px; margin-bottom:24px">
+        <h3 style="margin:0 0 16px">Create New User</h3>
+        <form method="POST" action="/admin/users/create">
+            <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; margin-bottom:12px">
+                <input type="text" name="username" placeholder="Username" required
+                       style="padding:10px; border:2px solid var(--border); border-radius:6px">
+                <input type="email" name="email" placeholder="Email" required
+                       style="padding:10px; border:2px solid var(--border); border-radius:6px">
+                <input type="password" name="password" placeholder="Password" required
+                       style="padding:10px; border:2px solid var(--border); border-radius:6px">
+            </div>
+            <div style="display:flex; gap:12px">
+                <select name="role" required style="padding:10px; border:2px solid var(--border); border-radius:6px">
+                    <option value="editor">Editor</option>
+                    <option value="admin">Admin</option>
+                    <option value="viewer">Viewer</option>
+                </select>
+                <button type="submit" class="btn btn-primary">Create User</button>
+                <button type="button" onclick="this.closest('form').reset(); document.getElementById('create-user-form').style.display='none'" class="btn btn-secondary">Cancel</button>
+            </div>
+        </form>
+    </div>
+
+    <div class="table-responsive">
+        <table>
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Username</th>
+                    <th>Email</th>
+                    <th>Role</th>
+                    <th>Status</th>
+                    <th>Last Login</th>
+                    <th>Created</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for u in users %}
+                <tr>
+                    <td>{{ u.id }}</td>
+                    <td><strong>{{ u.username }}</strong></td>
+                    <td>{{ u.email }}</td>
+                    <td>
+                        <span class="badge {% if u.role == 'admin' %}badge-danger{% elif u.role == 'editor' %}badge-info{% else %}badge-warning{% endif %}">
+                            {{ u.role.upper() }}
+                        </span>
+                    </td>
+                    <td>
+                        {% if u.is_active %}
+                        <span class="badge badge-success">Active</span>
+                        {% else %}
+                        <span class="badge badge-danger">Inactive</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ u.last_login.strftime('%Y-%m-%d %H:%M') if u.last_login else 'Never' }}</td>
+                    <td>{{ u.created_at.strftime('%Y-%m-%d') if u.created_at else '-' }}</td>
+                    <td>
+                        {% if u.username != user.username %}
+                        <form method="POST" action="/admin/users/{{ u.id }}/toggle" style="display:inline">
+                            <button type="submit" class="btn btn-secondary btn-sm">
+                                {% if u.is_active %}Deactivate{% else %}Activate{% endif %}
+                            </button>
+                        </form>
+                        {% else %}
+                        <span style="color:var(--text-muted); font-size:.8rem">(You)</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<div class="admin-card">
+    <h3>Role Permissions</h3>
+    <table style="font-size:.85rem">
+        <thead>
+            <tr>
+                <th>Role</th>
+                <th>View Content</th>
+                <th>Edit Posts</th>
+                <th>Manage Settings</th>
+                <th>Manage Users</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><strong>Admin</strong></td>
+                <td>✅</td>
+                <td>✅</td>
+                <td>✅</td>
+                <td>✅</td>
+            </tr>
+            <tr>
+                <td><strong>Editor</strong></td>
+                <td>✅</td>
+                <td>✅</td>
+                <td>❌</td>
+                <td>❌</td>
+            </tr>
+            <tr>
+                <td><strong>Viewer</strong></td>
+                <td>✅</td>
+                <td>❌</td>
+                <td>❌</td>
+                <td>❌</td>
+            </tr>
+        </tbody>
+    </table>
+</div>
+{% endblock %}

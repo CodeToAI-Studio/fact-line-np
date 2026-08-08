@@ -1,0 +1,86 @@
+{% extends "admin_base.html" %}
+
+{% block title %}Manage Posts{% endblock %}
+{% block page_title %}Posts{% endblock %}
+
+{% block content %}
+<div class="admin-card">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px">
+        <h2 style="margin:0">All Posts ({{ total }})</h2>
+        <div>
+            <form method="GET" style="display:inline-flex; gap:8px">
+                <select name="status" onchange="this.form.submit()" style="padding:8px; border:1px solid var(--border); border-radius:4px">
+                    <option value="">All Statuses</option>
+                    <option value="pending" {% if status_filter == 'pending' %}selected{% endif %}>Pending</option>
+                    <option value="approved" {% if status_filter == 'approved' %}selected{% endif %}>Approved</option>
+                    <option value="rejected" {% if status_filter == 'rejected' %}selected{% endif %}>Rejected</option>
+                </select>
+            </form>
+        </div>
+    </div>
+
+    {% if success %}
+    <div class="alert alert-success">{{ success }}</div>
+    {% endif %}
+
+    {% if error %}
+    <div class="alert alert-error">{{ error }}</div>
+    {% endif %}
+
+    <div class="table-responsive">
+        <table>
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Title</th>
+                    <th>Lang</th>
+                    <th>Region</th>
+                    <th>Category</th>
+                    <th>Status</th>
+                    <th>Published</th>
+                    <th>Created</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for post in posts %}
+                <tr>
+                    <td>{{ post.id }}</td>
+                    <td>
+                        <strong>{{ post.social_summary[:50] }}{% if post.social_summary|length > 50 %}...{% endif %}</strong>
+                    </td>
+                    <td><span class="badge badge-info">{{ post.language }}</span></td>
+                    <td>{{ post.region or '-' }}</td>
+                    <td>{{ post.category or '-' }}</td>
+                    <td>
+                        {% if post.status == 'approved' %}
+                        <span class="badge badge-success">Approved</span>
+                        {% elif post.status == 'pending' %}
+                        <span class="badge badge-warning">Pending</span>
+                        {% elif post.status == 'rejected' %}
+                        <span class="badge badge-danger">Rejected</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% set platform_count = post.platform_posts|length if post.platform_posts else 0 %}
+                        {% set published_count = post.platform_posts|selectattr('status', 'equalto', 'published')|list|length if post.platform_posts else 0 %}
+                        {{ published_count }}/{{ platform_count }}
+                    </td>
+                    <td>{{ post.created_at[5:16].replace('T',' ') if post.created_at else '-' }}</td>
+                    <td>
+                        <a href="/admin/posts/{{ post.id }}" class="btn btn-secondary btn-sm">Edit</a>
+                        <a href="/web/post/{{ post.id }}" target="_blank" class="btn btn-secondary btn-sm">View</a>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    {% if total > 50 %}
+    <p style="margin-top:16px; text-align:center; color:var(--text-muted); font-size:.85rem">
+        Showing {{ posts|length }} of {{ total }} posts
+    </p>
+    {% endif %}
+</div>
+{% endblock %}

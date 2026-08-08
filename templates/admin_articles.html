@@ -1,0 +1,50 @@
+{% extends "admin_base.html" %}
+
+{% block title %}Articles{% endblock %}
+{% block page_title %}Ingested Articles{% endblock %}
+
+{% block content %}
+<div class="admin-card">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px">
+        <h2 style="margin:0">Articles ({{ articles|length }} shown)</h2>
+        <span style="font-size:.85rem; color:var(--text-muted)">Raw items pulled from RSS feeds</span>
+    </div>
+
+    <div class="table-responsive">
+        <table>
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Title</th>
+                    <th>Source</th>
+                    <th>Region</th>
+                    <th>Category</th>
+                    <th>Image</th>
+                    <th>Post</th>
+                    <th>Created</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for a in articles %}
+                <tr>
+                    <td>{{ a.id }}</td>
+                    <td>
+                        <strong style="max-width:380px; display:inline-block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">
+                            <a href="{{ a.url }}" target="_blank" rel="noopener" style="color:var(--fl-red)">{{ a.title[:80] }}</a>
+                        </strong>
+                    </td>
+                    <td>{{ a.source }}</td>
+                    <td><span class="badge badge-info">{{ a.region or '-' }}</span></td>
+                    <td>{{ a.category or '-' }}</td>
+                    <td>{% if a.has_image %}<span class="badge badge-success">Yes</span>{% else %}<span class="badge badge-warning">No</span>{% endif %}</td>
+                    <td>{% if a.post_id %}<span class="badge badge-info">#{{ a.post_id }}</span>{% else %}<span class="badge badge-warning">Unassigned</span>{% endif %}</td>
+                    <td style="white-space:nowrap">{{ a.created_at[:10] if a.created_at else '-' }}</td>
+                </tr>
+                {% else %}
+                <tr><td colspan="8" style="text-align:center; color:var(--text-muted)">No articles ingested yet</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

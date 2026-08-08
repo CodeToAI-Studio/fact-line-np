@@ -33,7 +33,7 @@
         <div class="logo-mark">FL</div>
         <div>
           <div class="logo-text">FACT LINE<span class="logo-np">NP</span></div>
-          <div class="logo-tagline">Verified. Independent. Nepal.</div>
+          <div class="logo-tagline">{{ site_tagline }}</div>
         </div>
       </a>
       <div class="header-actions">
@@ -42,9 +42,9 @@
           <span>Search</span>
         </a>
         <div class="social-icons">
-          <a href="https://facebook.com/factlinenp" target="_blank" rel="noopener">FB</a>
-          <a href="https://instagram.com/factlinenp" target="_blank" rel="noopener">IG</a>
-          <a href="https://youtube.com/@factlinenp" target="_blank" rel="noopener">YT</a>
+          <a href="{{ facebook_url }}" target="_blank" rel="noopener">FB</a>
+          <a href="{{ instagram_url }}" target="_blank" rel="noopener">IG</a>
+          <a href="{{ youtube_url }}" target="_blank" rel="noopener">YT</a>
         </div>
 <nav class="site-nav" aria-label="Main">
   <div class="container">
@@ -75,7 +75,7 @@
 {% if breaking_news %}
 <div class="breaking-bar"><div class="container"><div class="ticker-inner">
   <span class="ticker-badge">Breaking</span>
-  <div class="ticker-text">{{ breaking_news }}</div>
+  <div class="ticker-text">{% if breaking_news_url %}<a href="{{ breaking_news_url }}">{{ breaking_news }}</a>{% else %}{{ breaking_news }}{% endif %}</div>
 </div></div></div>
 {% endif %}
 {% block content %}{% endblock %}
@@ -86,12 +86,12 @@
         <div class="logo-mark">FL</div>
         <div class="logo-text">FACT LINE<span class="logo-np">NP</span></div>
       </a>
-      <p>Verified, timely news for Nepal and beyond — grounded in independent reporting and responsible journalism.</p>
+      <p>{{ footer_about }}</p>
       <div class="footer-social">
-        <a href="https://facebook.com/factlinenp" target="_blank" rel="noopener">FB</a>
-        <a href="https://instagram.com/factlinenp" target="_blank" rel="noopener">IG</a>
-        <a href="https://youtube.com/@factlinenp" target="_blank" rel="noopener">YT</a>
-        <a href="https://twitter.com/factlinenp" target="_blank" rel="noopener">X</a>
+        <a href="{{ facebook_url }}" target="_blank" rel="noopener">FB</a>
+        <a href="{{ instagram_url }}" target="_blank" rel="noopener">IG</a>
+        <a href="{{ youtube_url }}" target="_blank" rel="noopener">YT</a>
+        <a href="{{ twitter_url }}" target="_blank" rel="noopener">X</a>
       </div>
     </div>
     <div class="footer-col"><h4>Categories</h4><ul>

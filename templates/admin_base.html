@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Admin{% endblock %} — Fact Line NP</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <style>
+        .admin-wrapper { display: flex; min-height: 100vh; }
+        .admin-sidebar { width: 260px; background: var(--fl-navy); color: white; padding: 20px; position: fixed; height: 100vh; overflow-y: auto; }
+        .admin-main { margin-left: 260px; flex: 1; background: var(--bg); padding: 24px; }
+        .admin-header { background: white; padding: 16px 24px; margin: -24px -24px 24px; box-shadow: 0 1px 3px rgba(0,0,0,.08); display: flex; justify-content: space-between; align-items: center; }
+        .admin-logo { display: flex; align-items: center; gap: 12px; margin-bottom: 32px; padding-bottom: 20px; border-bottom: 1px solid rgba(255,255,255,.1); }
+        .admin-logo img { width: 40px; height: 40px; }
+        .admin-logo-text { font-size: 1.1rem; font-weight: 700; }
+        .admin-logo-text small { display: block; font-size: .7rem; font-weight: 400; opacity: .6; margin-top: 2px; }
+        .admin-nav { list-style: none; padding: 0; margin: 0; }
+        .admin-nav li { margin-bottom: 4px; }
+        .admin-nav a { display: flex; align-items: center; gap: 10px; padding: 12px 14px; color: rgba(255,255,255,.7); border-radius: 6px; text-decoration: none; transition: .2s; font-size: .9rem; }
+        .admin-nav a:hover { background: rgba(255,255,255,.1); color: white; }
+        .admin-nav a.active { background: var(--fl-red); color: white; }
+        .admin-nav-icon { width: 18px; text-align: center; font-weight: 600; }
+        .admin-user { display: flex; align-items: center; gap: 12px; }
+        .admin-user-info { text-align: right; }
+        .admin-user-info strong { display: block; font-size: .9rem; }
+        .admin-user-info small { font-size: .75rem; color: var(--text-muted); }
+        .btn-logout { padding: 8px 16px; background: var(--fl-navy); color: white; border: none; border-radius: 4px; font-size: .85rem; cursor: pointer; transition: .2s; }
+        .btn-logout:hover { background: var(--fl-red); }
+        .admin-card { background: white; padding: 24px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.08); margin-bottom: 24px; }
+        .admin-card h2 { margin: 0 0 16px; font-size: 1.3rem; }
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
+        .stat-card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.08); border-left: 4px solid var(--fl-red); }
+        .stat-label { font-size: .8rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; }
+        .stat-value { font-size: 2rem; font-weight: 700; color: var(--fl-navy); }
+        .stat-change { font-size: .8rem; color: var(--text-muted); margin-top: 6px; }
+        .table-responsive { overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+        th { background: var(--bg); padding: 12px; text-align: left; font-weight: 600; color: var(--text); border-bottom: 2px solid var(--border); }
+        td { padding: 12px; border-bottom: 1px solid var(--border); }
+        tr:hover { background: var(--bg); }
+        .badge { display: inline-block; padding: 4px 10px; border-radius: 4px; font-size: .75rem; font-weight: 600; text-transform: uppercase; }
+        .badge-success { background: #D4EDDA; color: #155724; }
+        .badge-warning { background: #FFF3CD; color: #856404; }
+        .badge-danger { background: #F8D7DA; color: #721C24; }
+        .badge-info { background: #D1ECF1; color: #0C5460; }
+        .btn { padding: 8px 16px; border: none; border-radius: 4px; font-size: .85rem; cursor: pointer; transition: .2s; text-decoration: none; display: inline-block; }
+        .btn-primary { background: var(--fl-red); color: white; }
+        .btn-primary:hover { background: var(--fl-red-dark); }
+        .btn-secondary { background: var(--border); color: var(--text); }
+        .btn-secondary:hover { background: var(--text-muted); color: white; }
+        .btn-sm { padding: 6px 12px; font-size: .8rem; }
+        .alert { padding: 14px 18px; border-radius: 6px; margin-bottom: 20px; }
+        .alert-error { background: #FEE; color: #C00; border-left: 4px solid #C00; }
+        .alert-success { background: #EFE; color: #060; border-left: 4px solid #060; }
+        .alert-warning { background: #FFC; color: #860; border-left: 4px solid #F90; }
+    </style>
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+    <div class="admin-wrapper">
+        <aside class="admin-sidebar">
+            <div class="admin-logo">
+                <img src="/static/logo-circle.png" alt="FL NP">
+                <div class="admin-logo-text">
+                    FACT LINE NP
+                    <small>Admin Panel</small>
+                </div>
+            </div>
+
+            <ul class="admin-nav">
+                <li><a href="/admin" class="{% if request.path == '/admin' %}active{% endif %}">
+                    <span class="admin-nav-icon">📊</span> Dashboard
+                </a></li>
+                <li><a href="/admin/posts" class="{% if '/admin/posts' in request.path %}active{% endif %}">
+                    <span class="admin-nav-icon">📰</span> Posts
+                </a></li>
+                <li><a href="/admin/articles" class="{% if '/admin/articles' in request.path %}active{% endif %}">
+                    <span class="admin-nav-icon">📄</span> Articles
+                </a></li>
+                <li><a href="/admin/settings" class="{% if '/admin/settings' in request.path %}active{% endif %}">
+                    <span class="admin-nav-icon">⚙️</span> Site Settings
+                </a></li>
+                <li><a href="/admin/users" class="{% if '/admin/users' in request.path %}active{% endif %}">
+                    <span class="admin-nav-icon">👤</span> Users
+                </a></li>
+                <li><a href="/admin/logs" class="{% if '/admin/logs' in request.path %}active{% endif %}">
+                    <span class="admin-nav-icon">📋</span> Audit Logs
+                </a></li>
+                <li style="margin-top:20px; padding-top:20px; border-top:1px solid rgba(255,255,255,.1);">
+                    <a href="/web" target="_blank">
+                        <span class="admin-nav-icon">🌐</span> View Site
+                    </a>
+                </li>
+            </ul>
+        </aside>
+
+        <main class="admin-main">
+            <div class="admin-header">
+                <h1 style="margin:0; font-size:1.4rem; color:var(--fl-navy)">{% block page_title %}Dashboard{% endblock %}</h1>
+                <div class="admin-user">
+                    <div class="admin-user-info">
+                        <strong>{{ user.username }}</strong>
+                        <small>{{ user.role }}</small>
+                    </div>
+                    <form method="POST" action="/admin/logout" style="margin:0">
+                        <button type="submit" class="btn-logout">Logout</button>
+                    </form>
+                </div>
+            </div>
+
+            {% block content %}{% endblock %}
+        </main>
+    </div>
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

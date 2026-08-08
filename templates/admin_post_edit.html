@@ -1,0 +1,137 @@
+{% extends "admin_base.html" %}
+
+{% block title %}Edit Post #{{ post.id }}{% endblock %}
+{% block page_title %}Edit Post #{{ post.id }}{% endblock %}
+
+{% block content %}
+<div class="admin-card">
+    <div style="margin-bottom:20px">
+        <a href="/admin/posts" style="color:var(--fl-red); font-size:.9rem">← Back to Posts</a>
+    </div>
+
+    {% if success %}
+    <div class="alert alert-success">{{ success }}</div>
+    {% endif %}
+
+    {% if error %}
+    <div class="alert alert-error">{{ error }}</div>
+    {% endif %}
+
+    <form method="POST" action="/admin/posts/{{ post.id }}">
+        <div class="form-group" style="margin-bottom:20px">
+            <label for="social_summary" style="display:block; font-weight:600; margin-bottom:6px">Headline / Social Summary *</label>
+            <textarea id="social_summary" name="social_summary" rows="3" required
+                      style="width:100%; padding:10px; border:2px solid var(--border); border-radius:6px; font-size:.95rem; font-family:inherit">{{ post.social_summary }}</textarea>
+            <small style="color:var(--text-muted); font-size:.8rem">Short headline used on social + display pages</small>
+        </div>
+
+        <div class="form-group" style="margin-bottom:20px">
+            <label for="full_body" style="display:block; font-weight:600; margin-bottom:6px">Full Article *</label>
+            <textarea id="full_body" name="full_body" rows="15" required
+                      style="width:100%; padding:10px; border:2px solid var(--border); border-radius:6px; font-size:.95rem; font-family:inherit">{{ post.full_body }}</textarea>
+        </div>
+
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:20px">
+            <div class="form-group">
+                <label for="image_url" style="display:block; font-weight:600; margin-bottom:6px">Image URL</label>
+                <input type="url" id="image_url" name="image_url" value="{{ post.image_url or '' }}"
+                       style="width:100%; padding:10px; border:2px solid var(--border); border-radius:6px; font-size:.95rem">
+            </div>
+            <div class="form-group">
+                <label for="image_source_credit" style="display:block; font-weight:600; margin-bottom:6px">Image Credit</label>
+                <input type="text" id="image_source_credit" name="image_source_credit" value="{{ post.image_source_credit or '' }}"
+                       style="width:100%; padding:10px; border:2px solid var(--border); border-radius:6px; font-size:.95rem">
+            </div>
+        </div>
+
+        <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:16px; margin-bottom:20px">
+            <div class="form-group">
+                <label for="language" style="display:block; font-weight:600; margin-bottom:6px">Language</label>
+                <select id="language" name="language"
+                        style="width:100%; padding:10px; border:2px solid var(--border); border-radius:6px; font-size:.95rem">
+                    <option value="nepali" {% if post.language == 'nepali' %}selected{% endif %}>Nepali</option>
+                    <option value="english" {% if post.language == 'english' %}selected{% endif %}>English</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="region" style="display:block; font-weight:600; margin-bottom:6px">Region</label>
+                <select id="region" name="region"
+                        style="width:100%; padding:10px; border:2px solid var(--border); border-radius:6px; font-size:.95rem">
+                    <option value="">Not set</option>
+                    <option value="nepal" {% if post.region == 'nepal' %}selected{% endif %}>Nepal</option>
+                    <option value="international" {% if post.region == 'international' %}selected{% endif %}>International</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="category" style="display:block; font-weight:600; margin-bottom:6px">Category</label>
+                <select id="category" name="category"
+                        style="width:100%; padding:10px; border:2px solid var(--border); border-radius:6px; font-size:.95rem">
+                    <option value="">Not set</option>
+                    {% for cat in ['politics','economy','business','society','world','sports','entertainment','technology','tech','health','education','opinion','general'] %}
+                    <option value="{{ cat }}" {% if post.category == cat %}selected{% endif %}>{{ cat|title }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+
+        <div class="form-group" style="margin-bottom:20px">
+            <label for="status" style="display:block; font-weight:600; margin-bottom:6px">Status *</label>
+            <select id="status" name="status" required
+                    style="width:100%; padding:10px; border:2px solid var(--border); border-radius:6px; font-size:.95rem">
+                <option value="pending" {% if post.status == 'pending' %}selected{% endif %}>Pending</option>
+                <option value="approved" {% if post.status == 'approved' %}selected{% endif %}>Approved</option>
+                <option value="rejected" {% if post.status == 'rejected' %}selected{% endif %}>Rejected</option>
+                <option value="published" {% if post.status == 'published' %}selected{% endif %}>Published</option>
+            </select>
+            <small style="color:var(--text-muted); font-size:.8rem">Published posts appear on the public website.</small>
+        </div>
+
+        <div style="display:flex; gap:12px; padding-top:20px; border-top:1px solid var(--border)">
+            <button type="submit" class="btn btn-primary">Save Changes</button>
+            <a href="/admin/posts" class="btn btn-secondary">Cancel</a>
+            <button type="button" onclick="if(confirm('Delete this post permanently?')) document.getElementById('delete-form').submit()"
+                    class="btn" style="background:#C00; color:white; margin-left:auto">Delete Post</button>
+        </div>
+    </form>
+
+    <form id="delete-form" method="POST" action="/admin/posts/{{ post.id }}/delete" style="display:none"></form>
+</div>
+
+<div class="admin-card">
+    <h2>Publication Status</h2>
+    <div class="table-responsive">
+        <table>
+            <thead>
+                <tr>
+                    <th>Platform</th>
+                    <th>Status</th>
+                    <th>Published At</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for pp in post.platform_posts %}
+                <tr>
+                    <td><strong>{{ pp.platform.upper() }}</strong></td>
+                    <td>
+                        {% if pp.status == 'published' %}
+                        <span class="badge badge-success">Published</span>
+                        {% elif pp.status == 'failed' %}
+                        <span class="badge badge-danger">Failed</span>
+                        {% else %}
+                        <span class="badge badge-warning">{{ pp.status }}</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ pp.published_at[:16].replace('T',' ') if pp.published_at else '-' }}</td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="3" style="text-align:center; color:var(--text-muted)">No platform posts yet</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

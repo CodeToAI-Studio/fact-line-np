@@ -7,7 +7,7 @@ file. Read it top to bottom before touching code.
 Every created/edited/deleted file goes in either "What's Done" (with reasoning) or
 "Small Changes Log" (one line). Keep "What's Next" reordered by priority.
 
-**Last updated:** 2026-08-08
+**Last updated:** 2026-08-09
 
 ---
 
@@ -412,6 +412,74 @@ the blocker below is resolved or the hard rules change, update `RESUME.md` too.
   registered as APIRoute objects.
 - `GET /posts` JSON endpoint confirmed working throughout session.
 
+### Session 2026-08-09 (Claude Code)
+
+**27. Completed the admin CMS (paused mid-build on 2026-08-08).**
+   - `main.py` was left in a broken state: `web_static_page` had a stray `})` (SyntaxError)
+     and only login/logout/dashboard admin routes existed. Fixed the return, then added all
+     remaining admin routes and wired admin-editable settings into the public site.
+   - *New routes:* `/admin/posts` (list + status filter), `/admin/posts/{id}` (view/edit),
+     `/admin/posts/{id}/delete` (admin-only), `/admin/settings` (GET form + POST save),
+     `/admin/articles` (ingested raw RSS items), `/admin/users`, `/admin/users/create`,
+     `/admin/users/{id}/toggle`, `/admin/logs` (audit search by user).
+   - *Files created:* `admin_models.py` (AdminUser/SiteSetting/AuditLog +
+     `DEFAULT_SETTINGS`), `admin_auth.py` (session-cookie auth in a module-level dict;
+     SH-256 password hashing client-side — note: a DB-backed session store is pending),
+     `templates/admin_login.html`, `templates/admin_base.html`, `templates/admin_dashboard.html`,
+     `templates/admin_posts.html`, `templates/admin_post_edit.html`,
+     `templates/admin_settings.html`, `templates/admin_users.html`,
+     `templates/admin_logs.html`, `templates/admin_articles.html`.
+   - *Auth:* sessions are 24h cookies (`flnp_admin_session`, httpOnly, SameSite=lax) stored in a
+     process-local dict — fine for single-process, but **lost on restart** and not shared across
+     gunicorn/uvicorn workers. Move to a DB/Redis session store before multi-worker deploy.
+   - *Edit forms* adapted to the real `Post` schema (`social_summary`/`full_body`/`image_url`,
+     not `title`/`content`). Platform publication status shown read-only on the edit page;
+     `Post.status` is editable (pending/approved/rejected/published) so backfill is possible.
+   - *Admin settings drive the live site:* `_site_context(db)` injects breaking-news ticker,
+     footer about text, social URLs, and site tagline into every `/web` template; saving in
+     the admin panel updates the public site immediately (verified).
+   - *Verified end-to-end with FastAPI TestClient* (lifespan triggers table creation + admin
+     seed): login/logout; every admin page 200; settings save → breaking ticker appears on
+     `/web`; post edit persists; post delete works (cascade); user create + toggle works;
+     audit log records update_settings/create_user/delete_post. Auth gates redirect to
+     `/admin/login` when the session cookie is missing.
+
+**28. Root cause of the persistent `/web` 404s finally identified (Starlette signature change).**
+   - The site never actually rendered correctly since the web templates were built:
+     the installed Starlette **1.3.1** changed `Jinja2Templates.TemplateResponse` to
+     `(request, name, context)`. Every call site used the **old** `(name, context)` order:
+     Starlette treated the string name as `request` and the dict as `name`, so `get_template(dict)`
+     raised `TypeError: cannot use 'tuple' as a dict key`. The app still *compiled* and routes
+     *registered*, which is why `--reload` looked healthy while every request 500'd — earlier
+     sessions misdiagnosed this as stale uvicorn processes.
+   - *Fix:* rewrote all 24 `templates.TemplateResponse(...)` call sites to the new
+     `(request, name, context)` signature. All `/web` and `/admin` pages now return 200.
+   - *Lesson:* after any dependency upgrade, run a render smoke test, not just `py_compile`.
+     `import main` succeeding does not mean templates render.
+   - *Mitigation:* add a pinned-fastapi/starlette version, or **pin `starlette` in
+     `requirements.txt`** — currently unpinned, so a `pip install -r` on a fresh host pulls the
+     newest starlette and silently breaks all templates again. **Recommended: pin
+     `starlette==0.41.3`+ or pin the known-good `fastapi==0.141.1` together with starlette.**
+
+**29. Destructive-edit incident on Post 9 + recovery (be careful when test-editing live rows).**
+   During smoke-testing the admin post editor I overwrote Post 9 (a published Nepal story) with
+   empty fields, wiping its stored text (social_summary/full_body). The Telegram waiver was
+   active. Recovery path:
+   - The 8 `Article` rows linked to post_id=9 were re-clustered into a *different* mixed set
+     (Scout election, apple export, land-fraud, transport policy) → Gemini correctly judged that
+     whole set as *not* a single event (uncorroborated).
+   - Two of the articles (Ratopati #163 + Nagarik Dainik #191) were a genuine corroborated pair
+     ("Jagga ko nissa dinchan bhanera khosh gathan") — the actual subset that matched
+     2-source corroboration. Re-ran `generate_posts.build_verification_prompt` +
+     `call_gemini_for_cluster` over that pair → regenerated full_body+social_summary in Nepali,
+     restored `image_url` (Ratopati) + `image_source_credit`, kept `status=published` so the
+     FB/IG platform rows still point at a real story.
+   - **Lesson:** when testing POST handlers that mutate the DB, use a throwaway row (or run a
+     dry edit) — the admin editor *will* clobber any field. Better: the admin post editor should
+     probably refuse to clear all fields (min-length) — see "What's Next".
+   - Note: the FB Page access token has **expired** (07-Aug) — `FACEBOOK_PAGE_ACCESS_TOKEN` no
+     longer validates. The publisher will start failing any new posts. See "Open Questions".
+
 ---
 
 ## Small Changes Log
@@ -461,6 +529,13 @@ the blocker below is resolved or the hard rules change, update `RESUME.md` too.
 - `telegram_bot.py` — `format_post_message`: region/category fall back to `"unknown"` / `"uncategorised"`.
 - `requirements.txt` — added `python-telegram-bot[job-queue]==22.8` and pinned 7 previously-unpinned packages.
 - `run_pipeline.bat` — created: scheduled runner for `ingest_rss.py` + `generate_posts.py`.
+- `admin_models.py` — created: AdminUser/SiteSetting/AuditLog ORM + `DEFAULT_SETTINGS`.
+- `admin_auth.py` — created: session-cookie auth (in-memory session dict), SHA-256+salt passwords, audit `log_action`.
+- `templates/admin_*.html` — created: login, base, dashboard, posts, post_edit, settings, users, logs, articles.
+- `main.py` — added all `/admin` CRUD routes + `_site_context()`; fixed `web_static_page` stray brace (SyntaxError).
+- `main.py` — rewrote all `TemplateResponse(...)` calls to new Starlette `(request, name, context)` signature — this was the hidden cause of every `/web` page 500'ing in prior sessions.
+- `templates/base.html` — breaking-news ticker now links `breaking_news_url`; logo tagline + footer + social links read from `SiteSetting`.
+- `templates/admin_posts.html` — `post.created_at.strftime(...)` → `post.created_at[5:16].replace('T',' ')` (route passes ISO string).
 
 ---
 
@@ -475,8 +550,24 @@ the blocker below is resolved or the hard rules change, update `RESUME.md` too.
 6. ~~FB/IG publisher — Meta credentials + live test~~ ✅ Done
 7. **Posts 1, 4, 5: IG still pending (no `image_url`).** Attach an image via SQL then run `python publisher.py`.
 8. ~~Build website publisher / viewer~~ ✅ Done — `GET /web` + article pages live at `localhost:8000/web`
-9. **Token refresh reminder** set for 2026-10-06 (durable cron job, fires in Claude Code).
-10. **Deploy to public server** — the biggest remaining step. Code is production-ready.
+9. ~~Build admin CMS~~ ✅ Done — `/admin` login + full CRUD. Log in at `/admin/login`.
+   Default: `ADMIN_USERNAME`/`ADMIN_PASSWORD` from `.env` (seeded on first boot as
+   `admin` / `FactLineNP2026!`). **Change the default password before going public.**
+10. **REFRESH `FACEBOOK_PAGE_ACCESS_TOKEN` — expired 2026-08-07.** This is now urgent
+    (not the 2026-10-06 reminder — extended access was shorter than expected). `publisher.py`
+    will 400 on every new post until replaced. Regenerate via Meta: long-lived token →
+    exchange or re-issue at https://developers.facebook.com (App `961662956934562`).
+11. **Pin `starlette` (or re-verify template rendering after installs).** The unpinned
+    starlette jumped to 1.3.1 which changed `TemplateResponse(request, name, context)`
+    and silently broke every template — `py_compile` + `import main` do not catch this.
+12. **Move admin sessions out of the in-memory dict** to a DB-backed store before any
+    multi-worker deploy (sessions die on restart and are not shared across workers).
+13. **Post editor hardening:** prevent saving a post with empty `social_summary`/`full_body`
+    (the 2026-08-09 incident wiped Post 9's text via the editor). Add min-length validation.
+14. **Deploy to public server — in progress.**
+    Git repo initialized, initial commit made, `.gitignore`, `Procfile`, `railway.toml`
+    created. Next: push to GitHub → create Railway project → add PostgreSQL → set env
+    vars → point local pipeline at Railway DB. See session 2026-08-08 notes.
     Recommended: Railway or Render (free tier, ~30 min setup). Steps:
     - Push repo to GitHub (exclude `.env` — add to `.gitignore`)
     - Create a Railway/Render project, set environment variables from `.env`
@@ -484,7 +575,7 @@ the blocker below is resolved or the hard rules change, update `RESUME.md` too.
     - Point a custom domain (e.g. factlinenp.com) at the deployed URL
     - For the watcher (`watch_pipeline.py`) + Telegram bot: run as separate Railway
       services or on a cheap VPS alongside the API.
-11. **Deferred — WhatsApp approval.** Code is in the repo; revisit once deployed.
+15. **Deferred — WhatsApp approval.** Code is in the repo; revisit once deployed.
 
 ---
 

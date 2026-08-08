@@ -1,0 +1,147 @@
+{% extends "admin_base.html" %}
+
+{% block title %}Site Settings{% endblock %}
+{% block page_title %}Site Settings{% endblock %}
+
+{% block content %}
+{% if success %}
+<div class="alert alert-success">{{ success }}</div>
+{% endif %}
+
+{% if error %}
+<div class="alert alert-error">{{ error }}</div>
+{% endif %}
+
+<form method="POST" action="/admin/settings">
+    <div class="admin-card">
+        <h2>General</h2>
+
+        <div class="form-group" style="margin-bottom:20px">
+            <label for="site_title" style="display:block; font-weight:600; margin-bottom:6px">Site Title</label>
+            <input type="text" id="site_title" name="site_title" value="{{ settings.get('site_title', '') }}"
+                   style="width:100%; padding:10px; border:2px solid var(--border); border-radius:6px; font-size:.95rem">
+            <small style="color:var(--text-muted); font-size:.8rem">Shown in header and meta tags</small>
+        </div>
+
+        <div class="form-group" style="margin-bottom:20px">
+            <label for="site_tagline" style="display:block; font-weight:600; margin-bottom:6px">Site Tagline</label>
+            <input type="text" id="site_tagline" name="site_tagline" value="{{ settings.get('site_tagline', '') }}"
+                   style="width:100%; padding:10px; border:2px solid var(--border); border-radius:6px; font-size:.95rem">
+            <small style="color:var(--text-muted); font-size:.8rem">Tagline under logo</small>
+        </div>
+
+        <div class="form-group" style="margin-bottom:20px">
+            <label for="footer_about" style="display:block; font-weight:600; margin-bottom:6px">Footer About Text</label>
+            <textarea id="footer_about" name="footer_about" rows="3"
+                      style="width:100%; padding:10px; border:2px solid var(--border); border-radius:6px; font-size:.95rem; font-family:inherit">{{ settings.get('footer_about', '') }}</textarea>
+        </div>
+    </div>
+
+    <div class="admin-card">
+        <h2>Breaking News Ticker</h2>
+
+        <div class="form-group" style="margin-bottom:20px">
+            <label for="breaking_news_text" style="display:block; font-weight:600; margin-bottom:6px">Breaking News Text</label>
+            <input type="text" id="breaking_news_text" name="breaking_news_text" value="{{ settings.get('breaking_news_text', '') }}"
+                   style="width:100%; padding:10px; border:2px solid var(--border); border-radius:6px; font-size:.95rem">
+            <small style="color:var(--text-muted); font-size:.8rem">Leave empty to hide the breaking news banner</small>
+        </div>
+
+        <div class="form-group" style="margin-bottom:20px">
+            <label for="breaking_news_url" style="display:block; font-weight:600; margin-bottom:6px">Breaking News Link</label>
+            <input type="text" id="breaking_news_url" name="breaking_news_url" value="{{ settings.get('breaking_news_url', '') }}"
+                   style="width:100%; padding:10px; border:2px solid var(--border); border-radius:6px; font-size:.95rem">
+            <small style="color:var(--text-muted); font-size:.8rem">Full URL or /web/post/123</small>
+        </div>
+    </div>
+
+    <div class="admin-card">
+        <h2>Social Media Links</h2>
+
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px">
+            <div class="form-group" style="margin-bottom:20px">
+                <label for="facebook_url" style="display:block; font-weight:600; margin-bottom:6px">Facebook Page URL</label>
+                <input type="text" id="facebook_url" name="facebook_url" value="{{ settings.get('facebook_url', '') }}"
+                       style="width:100%; padding:10px; border:2px solid var(--border); border-radius:6px; font-size:.95rem">
+            </div>
+
+            <div class="form-group" style="margin-bottom:20px">
+                <label for="instagram_url" style="display:block; font-weight:600; margin-bottom:6px">Instagram URL</label>
+                <input type="text" id="instagram_url" name="instagram_url" value="{{ settings.get('instagram_url', '') }}"
+                       style="width:100%; padding:10px; border:2px solid var(--border); border-radius:6px; font-size:.95rem">
+            </div>
+
+            <div class="form-group" style="margin-bottom:20px">
+                <label for="youtube_url" style="display:block; font-weight:600; margin-bottom:6px">YouTube Channel URL</label>
+                <input type="text" id="youtube_url" name="youtube_url" value="{{ settings.get('youtube_url', '') }}"
+                       style="width:100%; padding:10px; border:2px solid var(--border); border-radius:6px; font-size:.95rem">
+            </div>
+
+            <div class="form-group" style="margin-bottom:20px">
+                <label for="twitter_url" style="display:block; font-weight:600; margin-bottom:6px">Twitter/X URL</label>
+                <input type="text" id="twitter_url" name="twitter_url" value="{{ settings.get('twitter_url', '') }}"
+                       style="width:100%; padding:10px; border:2px solid var(--border); border-radius:6px; font-size:.95rem">
+            </div>
+        </div>
+    </div>
+
+    <div class="admin-card">
+        <h2>Contact</h2>
+
+        <div class="form-group" style="margin-bottom:20px">
+            <label for="contact_email" style="display:block; font-weight:600; margin-bottom:6px">Contact Email</label>
+            <input type="email" id="contact_email" name="contact_email" value="{{ settings.get('contact_email', '') }}"
+                   style="width:100%; padding:10px; border:2px solid var(--border); border-radius:6px; font-size:.95rem">
+        </div>
+    </div>
+
+    <div class="admin-card">
+        <h2>Advertising</h2>
+        <p style="color:var(--text-muted); font-size:.9rem; margin-bottom:16px">
+            Paste HTML/JavaScript code for ad placements. All code is sanitized before display.
+        </p>
+
+        <div class="form-group" style="margin-bottom:20px">
+            <label for="ad_header_code" style="display:block; font-weight:600; margin-bottom:6px">Header Ad Code</label>
+            <textarea id="ad_header_code" name="ad_header_code" rows="4"
+                      style="width:100%; padding:10px; border:2px solid var(--border); border-radius:6px; font-size:.85rem; font-family:monospace">{{ settings.get('ad_header_code', '') }}</textarea>
+        </div>
+
+        <div class="form-group" style="margin-bottom:20px">
+            <label for="ad_sidebar_code" style="display:block; font-weight:600; margin-bottom:6px">Sidebar Ad Code</label>
+            <textarea id="ad_sidebar_code" name="ad_sidebar_code" rows="4"
+                      style="width:100%; padding:10px; border:2px solid var(--border); border-radius:6px; font-size:.85rem; font-family:monospace">{{ settings.get('ad_sidebar_code', '') }}</textarea>
+        </div>
+
+        <div class="form-group" style="margin-bottom:20px">
+            <label for="ad_article_code" style="display:block; font-weight:600; margin-bottom:6px">In-Article Ad Code</label>
+            <textarea id="ad_article_code" name="ad_article_code" rows="4"
+                      style="width:100%; padding:10px; border:2px solid var(--border); border-radius:6px; font-size:.85rem; font-family:monospace">{{ settings.get('ad_article_code', '') }}</textarea>
+            <small style="color:var(--text-muted); font-size:.8rem">Shown after 3rd paragraph in article content</small>
+        </div>
+    </div>
+
+    <div class="admin-card">
+        <h2>Analytics</h2>
+
+        <div class="form-group" style="margin-bottom:20px">
+            <label style="display:flex; align-items:center; gap:8px; cursor:pointer">
+                <input type="checkbox" name="enable_analytics" value="true" {% if settings.get('enable_analytics') == 'true' %}checked{% endif %}
+                       style="width:18px; height:18px">
+                <span style="font-weight:600">Enable Google Analytics</span>
+            </label>
+        </div>
+
+        <div class="form-group" style="margin-bottom:20px">
+            <label for="analytics_id" style="display:block; font-weight:600; margin-bottom:6px">Google Analytics Tracking ID</label>
+            <input type="text" id="analytics_id" name="analytics_id" value="{{ settings.get('analytics_id', '') }}"
+                   placeholder="G-XXXXXXXXXX or UA-XXXXXXXXX-X"
+                   style="width:100%; padding:10px; border:2px solid var(--border); border-radius:6px; font-size:.95rem">
+        </div>
+    </div>
+
+    <div style="position:sticky; bottom:0; background:white; padding:20px; box-shadow:0 -2px 8px rgba(0,0,0,.1); margin:-24px -24px 0">
+        <button type="submit" class="btn btn-primary" style="padding:12px 32px; font-size:1rem">Save All Settings</button>
+    </div>
+</form>
+{% endblock %}

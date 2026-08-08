@@ -26,6 +26,11 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
 from models import Article, Post, Base, SessionLocal, engine
+from admin_models import AdminUser, SiteSetting, AuditLog, DEFAULT_SETTINGS
+from admin_auth import (
+    SESSION_COOKIE_NAME, create_session, delete_session,
+    get_current_user, authenticate_user, create_admin_user, log_action
+)
 from embeddings import get_embedding
 from llm_models import PRIMARY_MODELS, list_available_models
 from whatsapp_client import send_text_message
@@ -68,6 +73,24 @@ async def lifespan(app: FastAPI):
 
     if GEMINI_API_KEY:
         llm_client = genai.Client(api_key=GEMINI_API_KEY)
+
+    # Seed default site settings and initial admin user on first run
+    db = SessionLocal()
+    try:
+        for key, (value, value_type, desc) in DEFAULT_SETTINGS.items():
+            if not db.get(SiteSetting, key):
+                db.add(SiteSetting(key=key, value=value, value_type=value_type, description=desc))
+        if db.query(AdminUser).count() == 0:
+            admin_u = os.getenv("ADMIN_USERNAME", "admin")
+            admin_p = os.getenv("ADMIN_PASSWORD", "FactLineNP2026!")
+            admin_e = os.getenv("ADMIN_EMAIL", "admin@factlinenp.com")
+            u = AdminUser(username=admin_u, email=admin_e, role="admin", is_active=True)
+            u.set_password(admin_p)
+            db.add(u)
+            logger.info("Created default admin user: %s", admin_u)
+        db.commit()
+    finally:
+        db.close()
 
     yield
 
@@ -673,6 +696,34 @@ def _most_read(db, limit: int = 5):
     return [_p(p) for p in rows]
 
 
+def _site_context(db) -> dict:
+    """Admin-editable site settings (breaking ticker, social links, tagline,
+    ad slots) merged into a flat dict for every /web template. Undefined
+    settings fall back to the default Fact Line NP values."""
+    rows = db.query(SiteSetting).all()
+    s = {r.key: r.value for r in rows}
+
+    def _g(key, default):
+        val = s.get(key)
+        return val if val else default
+
+    return {
+        "site_title": _g("site_title", "Fact Line NP"),
+        "site_tagline": _g("site_tagline", "Nepal News. Verified. Explained."),
+        "breaking_news": _g("breaking_news_text", ""),
+        "breaking_news_url": _g("breaking_news_url", ""),
+        "footer_about": _g("footer_about", "Fact Line NP delivers verified, contextualized news from Nepal and around the world."),
+        "contact_email": _g("contact_email", "contact@factlinenp.com"),
+        "facebook_url": _g("facebook_url", "https://facebook.com/factlinenp"),
+        "instagram_url": _g("instagram_url", "https://instagram.com/factlinenp"),
+        "youtube_url": _g("youtube_url", "https://youtube.com/@factlinenp"),
+        "twitter_url": _g("twitter_url", "https://twitter.com/factlinenp"),
+        "ad_header_code": _g("ad_header_code", ""),
+        "ad_sidebar_code": _g("ad_sidebar_code", ""),
+        "ad_article_code": _g("ad_article_code", ""),
+    }
+
+
 @app.get("/web", include_in_schema=False)
 def web_index(request: Request, db: Session = Depends(get_db)):
     all_posts = db.execute(
@@ -704,15 +755,15 @@ def web_index(request: Request, db: Session = Depends(get_db)):
         .order_by(Post.created_at.desc()).limit(3)
     ).scalars().all()
 
-    return templates.TemplateResponse("index.html", {
-        "request": request, "current_page": "home",
-        "hero_lead": hero_lead, "hero_subs": hero_subs,
-        "latest_posts": post_dicts[:10],
-        "most_read": _most_read(db),
-        "category_sections": cat_sections,
-        "opinion_posts": [_p(r) for r in op_rows],
-        "all_categories": cats,
-    })
+    ctx = {"request": request, "current_page": "home",
+           "hero_lead": hero_lead, "hero_subs": hero_subs,
+           "latest_posts": post_dicts[:10],
+           "most_read": _most_read(db),
+           "category_sections": cat_sections,
+           "opinion_posts": [_p(r) for r in op_rows],
+           "all_categories": cats}
+    ctx.update(_site_context(db))
+    return templates.TemplateResponse(request, "index.html", ctx)
 
 
 
@@ -721,19 +772,19 @@ def web_index(request: Request, db: Session = Depends(get_db)):
 def web_post(request: Request, post_id: int, db: Session = Depends(get_db)):
     post = db.get(Post, post_id)
     if not post or post.status not in ("published", "approved"):
-        return templates.TemplateResponse("404.html", {"request": request}, status_code=404)
+        return templates.TemplateResponse(request, "404.html", {"request": request}, status_code=404)
     words = len((post.full_body or "").split())
     related_rows = db.execute(
         select(Post).where(Post.status == "published", Post.id != post_id,
                            func.lower(Post.category) == (post.category or "").lower())
         .order_by(Post.created_at.desc()).limit(3)
     ).scalars().all()
-    return templates.TemplateResponse("post.html", {
-        "request": request, "post": _p(post),
-        "related": [_p(r) for r in related_rows],
-        "most_read": _most_read(db),
-        "reading_time": max(1, round(words / 200)),
-    })
+    ctx = {"request": request, "post": _p(post),
+           "related": [_p(r) for r in related_rows],
+           "most_read": _most_read(db),
+           "reading_time": max(1, round(words / 200))}
+    ctx.update(_site_context(db))
+    return templates.TemplateResponse(request, "post.html", ctx)
 
 
 @app.get("/web/category/{category}", include_in_schema=False)
@@ -745,11 +796,11 @@ def web_category(request: Request, category: str, db: Session = Depends(get_db))
                            func.lower(Post.category) == safe_cat.lower())
         .order_by(Post.created_at.desc()).limit(40)
     ).scalars().all()
-    return templates.TemplateResponse("category.html", {
-        "request": request, "current_cat": safe_cat.lower(),
-        "category": safe_cat, "posts": [_p(r) for r in rows],
-        "all_categories": _all_categories(db),
-    })
+    ctx = {"request": request, "current_cat": safe_cat.lower(),
+            "category": safe_cat, "posts": [_p(r) for r in rows],
+            "all_categories": _all_categories(db)}
+    ctx.update(_site_context(db))
+    return templates.TemplateResponse(request, "category.html", ctx)
 
 
 @app.get("/web/latest", include_in_schema=False)
@@ -758,10 +809,10 @@ def web_latest(request: Request, db: Session = Depends(get_db)):
         select(Post).where(Post.status == "published")
         .order_by(Post.created_at.desc()).limit(50)
     ).scalars().all()
-    return templates.TemplateResponse("latest.html", {
-        "request": request, "current_page": "latest",
-        "posts": [_p(r) for r in rows], "all_categories": _all_categories(db),
-    })
+    ctx = {"request": request, "current_page": "latest",
+            "posts": [_p(r) for r in rows], "all_categories": _all_categories(db)}
+    ctx.update(_site_context(db))
+    return templates.TemplateResponse(request, "latest.html", ctx)
 
 
 @app.get("/web/popular", include_in_schema=False)
@@ -770,10 +821,10 @@ def web_popular(request: Request, db: Session = Depends(get_db)):
         select(Post).where(Post.status == "published")
         .order_by(Post.created_at.desc()).limit(30)
     ).scalars().all()
-    return templates.TemplateResponse("latest.html", {
-        "request": request, "current_page": "popular",
-        "posts": [_p(r) for r in rows], "all_categories": _all_categories(db),
-    })
+    ctx = {"request": request, "current_page": "popular",
+            "posts": [_p(r) for r in rows], "all_categories": _all_categories(db)}
+    ctx.update(_site_context(db))
+    return templates.TemplateResponse(request, "latest.html", ctx)
 
 
 @app.get("/web/search", include_in_schema=False)
@@ -789,10 +840,10 @@ def web_search(request: Request, q: Optional[str] = None, db: Session = Depends(
             ).order_by(Post.created_at.desc()).limit(30)
         ).scalars().all()
         results = [_p(r) for r in rows]
-    return templates.TemplateResponse("search.html", {
-        "request": request, "query": query,
-        "results": results, "all_categories": _all_categories(db),
-    })
+    ctx = {"request": request, "query": query,
+            "results": results, "all_categories": _all_categories(db)}
+    ctx.update(_site_context(db))
+    return templates.TemplateResponse(request, "search.html", ctx)
 
 
 @app.get("/web/about", include_in_schema=False)
@@ -807,24 +858,331 @@ def web_static_page(request: Request, db: Session = Depends(get_db)):
     tpl = f"{page}.html"
     if not _os.path.exists(f"templates/{tpl}"):
         tpl = "about.html"
-    return templates.TemplateResponse(tpl, {
-        "request": request, "all_categories": _all_categories(db),
+    ctx = {"request": request, "all_categories": _all_categories(db)}
+    ctx.update(_site_context(db))
+    return templates.TemplateResponse(request, tpl, ctx)
+
+
+# ── Admin helpers ──────────────────────────────────────────────────────────────
+from fastapi.responses import JSONResponse, RedirectResponse
+
+def _admin_redirect_login():
+    return RedirectResponse(url="/admin/login", status_code=303)
+
+def _get_settings(db) -> dict:
+    rows = db.query(SiteSetting).all()
+    return {r.key: r.value for r in rows}
+
+def _save_setting(db, key: str, value: str, user: dict):
+    row = db.get(SiteSetting, key)
+    if row:
+        row.value = value
+        row.updated_by = user["username"]
+    else:
+        db.add(SiteSetting(key=key, value=value, updated_by=user["username"]))
+
+
+# ── Admin: Login / Logout ─────────────────────────────────────────────────────
+@app.get("/admin/login", include_in_schema=False)
+def admin_login_page(request: Request):
+    if get_current_user(request):
+        return RedirectResponse(url="/admin", status_code=303)
+    return templates.TemplateResponse(request, "admin_login.html", {"request": request})
+
+@app.post("/admin/login", include_in_schema=False)
+async def admin_login(request: Request, db: Session = Depends(get_db)):
+    form = await request.form()
+    username = (form.get("username") or "").strip()[:50]
+    password = form.get("password") or ""
+    user = authenticate_user(db, username, password)
+    if not user:
+        log_action(db, {"username": username}, "login_failed", ip=request.client.host if request.client else None)
+        return templates.TemplateResponse(request, "admin_login.html", {
+            "request": request, "error": "Invalid username or password."
+        }, status_code=401)
+    session_id = create_session(user)
+    log_action(db, {"username": user.username}, "login_success", ip=request.client.host if request.client else None)
+    resp = RedirectResponse(url="/admin", status_code=303)
+    resp.set_cookie(SESSION_COOKIE_NAME, session_id, httponly=True, samesite="lax", max_age=86400)
+    return resp
+
+@app.post("/admin/logout", include_in_schema=False)
+def admin_logout(request: Request):
+    sid = request.cookies.get(SESSION_COOKIE_NAME)
+    if sid:
+        delete_session(sid)
+    resp = RedirectResponse(url="/admin/login", status_code=303)
+    resp.delete_cookie(SESSION_COOKIE_NAME)
+    return resp
+
+
+# ── Admin: Dashboard ──────────────────────────────────────────────────────────
+@app.get("/admin", include_in_schema=False)
+def admin_dashboard(request: Request, db: Session = Depends(get_db)):
+    user = get_current_user(request)
+    if not user:
+        return _admin_redirect_login()
+    from datetime import datetime, timezone, timedelta
+    today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    stats = {
+        "total_posts": db.query(Post).count(),
+        "published_posts": db.query(Post).filter(Post.status == "published").count(),
+        "pending_posts": db.query(Post).filter(Post.status == "pending").count(),
+        "rejected_posts": db.query(Post).filter(Post.status == "rejected").count(),
+        "total_articles": db.query(Article).count(),
+        "unclustered_articles": db.query(Article).filter(Article.post_id.is_(None)).count(),
+        "published_today": db.query(Post).filter(Post.status == "published", Post.created_at >= today).count(),
+        "fb_published": 0, "ig_published": 0,
+    }
+    from models import PlatformPost
+    stats["fb_published"] = db.query(PlatformPost).filter(PlatformPost.platform == "facebook", PlatformPost.status == "published").count()
+    stats["ig_published"] = db.query(PlatformPost).filter(PlatformPost.platform == "instagram", PlatformPost.status == "published").count()
+    recent_posts = [{"id": p.id, "title": p.social_summary or "", "language": p.language or "?",
+                     "region": p.region, "status": p.status, "created_at": p.created_at,
+                     "platform_posts": p.platform_posts} for p in
+                    db.query(Post).order_by(Post.created_at.desc()).limit(10).all()]
+    recent_logs = db.query(AuditLog).order_by(AuditLog.timestamp.desc()).limit(10).all()
+    return templates.TemplateResponse(request, "admin_dashboard.html", {
+        "request": request, "user": user, "stats": stats,
+        "recent_posts": recent_posts, "recent_logs": recent_logs,
     })
 
 
-@app.exception_handler(404)
-async def not_found_handler(request: Request, exc):
-    if request.url.path.startswith("/web"):
-        return templates.TemplateResponse("404.html", {"request": request}, status_code=404)
-    from fastapi.responses import JSONResponse
-    return JSONResponse({"detail": "Not found"}, status_code=404)
+# ── Admin: Posts (list / edit / delete) ───────────────────────────────────────
+@app.get("/admin/posts", include_in_schema=False)
+def admin_posts(request: Request, status_filter: str = "", db: Session = Depends(get_db)):
+    user = get_current_user(request)
+    if not user:
+        return _admin_redirect_login()
+    q = db.query(Post)
+    if status_filter:
+        q = q.filter(Post.status == status_filter)
+    posts = q.order_by(Post.created_at.desc()).limit(100).all()
+    data = []
+    for p in posts:
+        d = _p(p)
+        d["platform_posts"] = [
+            {"platform": pp.platform, "status": pp.status,
+             "published_at": pp.published_at.isoformat() if pp.published_at else None}
+            for pp in p.platform_posts
+        ]
+        data.append(d)
+    return templates.TemplateResponse(request, "admin_posts.html", {
+        "request": request, "user": user, "posts": data,
+        "total": len(posts), "status_filter": status_filter,
+    })
 
 
-@app.exception_handler(500)
-async def server_error_handler(request: Request, exc):
-    logger.error("500 on %s: %s", request.url.path, exc)
-    if request.url.path.startswith("/web"):
-        return templates.TemplateResponse("404.html", {"request": request}, status_code=500)
-    from fastapi.responses import JSONResponse
-    return JSONResponse({"detail": "Internal server error"}, status_code=500)
+@app.get("/admin/posts/{post_id}", include_in_schema=False)
+def admin_post_edit(request: Request, post_id: int, db: Session = Depends(get_db)):
+    user = get_current_user(request)
+    if not user:
+        return _admin_redirect_login()
+    post = db.get(Post, post_id)
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    pp = [{"id": pp.id, "platform": pp.platform, "status": pp.status,
+           "published_at": pp.published_at.isoformat() if pp.published_at else None}
+          for pp in post.platform_posts]
+    return templates.TemplateResponse(request, "admin_post_edit.html", {
+        "request": request, "user": user, "post": _p(post) | {"platform_posts": pp},
+        "error": None, "success": None,
+    })
 
+
+@app.post("/admin/posts/{post_id}", include_in_schema=False)
+async def admin_post_update(request: Request, post_id: int, db: Session = Depends(get_db)):
+    user = get_current_user(request)
+    if not user:
+        return _admin_redirect_login()
+    post = db.get(Post, post_id)
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    form = await request.form()
+    from datetime import datetime, timezone
+    new_summary = (form.get("social_summary") or "").strip()
+    new_body = (form.get("full_body") or "").strip()
+    # Guard against accidentally wiping a post (happened 2026-08-09):
+    # never let the editor clear content that already exists.
+    if len(new_summary) < 5 and (post.social_summary or "").strip():
+        return templates.TemplateResponse(request, "admin_post_edit.html", {
+            "request": request, "user": user, "post": _p(post) | {"platform_posts": [
+                {"id": pp.id, "platform": pp.platform, "status": pp.status,
+                 "published_at": pp.published_at.isoformat() if pp.published_at else None}
+                for pp in post.platform_posts]},
+            "error": "Headline is too short — refusing to wipe the existing post.",
+            "success": None,
+        })
+    if len(new_body) < 20 and (post.full_body or "").strip():
+        return templates.TemplateResponse(request, "admin_post_edit.html", {
+            "request": request, "user": user, "post": _p(post) | {"platform_posts": [
+                {"id": pp.id, "platform": pp.platform, "status": pp.status,
+                 "published_at": pp.published_at.isoformat() if pp.published_at else None}
+                for pp in post.platform_posts]},
+            "error": "Article body is too short — refusing to wipe existing content.",
+            "success": None,
+        })
+    post.social_summary = new_summary
+    post.full_body = new_body
+    post.language = (form.get("language") or "").strip() or None
+    post.region = (form.get("region") or "").strip() or None
+    post.category = (form.get("category") or "").strip() or None
+    post.image_url = (form.get("image_url") or "").strip() or None
+    post.image_source_credit = (form.get("image_source_credit") or "").strip() or None
+    new_status = (form.get("status") or "").strip()
+    if new_status in ("pending", "approved", "rejected", "published"):
+        post.status = new_status
+    db.commit()
+    log_action(db, user, "edit_post", "Post", post.id)
+    pp = [{"id": pp.id, "platform": pp.platform, "status": pp.status,
+           "published_at": pp.published_at.isoformat() if pp.published_at else None}
+          for pp in post.platform_posts]
+    return templates.TemplateResponse(request, "admin_post_edit.html", {
+        "request": request, "user": user, "post": _p(post) | {"platform_posts": pp},
+        "error": None, "success": f"Post #{post.id} updated.",
+    })
+
+
+@app.post("/admin/posts/{post_id}/delete", include_in_schema=False)
+async def admin_post_delete(request: Request, post_id: int, db: Session = Depends(get_db)):
+    user = get_current_user(request)
+    if not user:
+        return _admin_redirect_login()
+    if user["role"] != "admin":
+        return templates.TemplateResponse(request, "admin_posts.html", {
+            "request": request, "user": user, "posts": [], "total": 0,
+            "status_filter": "", "error": "Only admins can delete posts.",
+        }, status_code=403)
+    post = db.get(Post, post_id)
+    if post:
+        log_action(db, user, "delete_post", "Post", post_id)
+        db.delete(post)
+        db.commit()
+    return RedirectResponse(url="/admin/posts", status_code=303)
+
+
+# ── Admin: Articles (ingested raw feed items) ─────────────────────────────────
+@app.get("/admin/articles", include_in_schema=False)
+def admin_articles(request: Request, limit: int = 100, db: Session = Depends(get_db)):
+    user = get_current_user(request)
+    if not user:
+        return _admin_redirect_login()
+    articles = db.query(Article).order_by(Article.created_at.desc()).limit(min(limit, 500)).all()
+    rows = [{
+        "id": a.id, "title": a.title, "source": a.source, "url": a.url,
+        "region": a.region, "category": a.category,
+        "has_image": bool(a.image_url), "post_id": a.post_id,
+        "created_at": a.created_at.isoformat() if a.created_at else None,
+    } for a in articles]
+    return templates.TemplateResponse(request, "admin_articles.html", {
+        "request": request, "user": user, "articles": rows,
+    })
+
+
+# ── Admin: Settings ───────────────────────────────────────────────────────────
+@app.get("/admin/settings", include_in_schema=False)
+def admin_settings(request: Request, db: Session = Depends(get_db)):
+    user = get_current_user(request)
+    if not user:
+        return _admin_redirect_login()
+    return templates.TemplateResponse(request, "admin_settings.html", {
+        "request": request, "user": user, "settings": _get_settings(db),
+        "error": None, "success": None,
+    })
+
+
+@app.post("/admin/settings", include_in_schema=False)
+async def admin_settings_save(request: Request, db: Session = Depends(get_db)):
+    user = get_current_user(request)
+    if not user:
+        return _admin_redirect_login()
+    if user["role"] not in ("admin", "editor"):
+        return templates.TemplateResponse(request, "admin_settings.html", {
+            "request": request, "user": user, "settings": _get_settings(db),
+            "error": "You don't have permission to edit settings.", "success": None,
+        }, status_code=403)
+    form = await request.form()
+    for key in DEFAULT_SETTINGS:
+        if key in form:
+            _save_setting(db, key, (form.get(key) or "").strip(), user)
+    db.commit()
+    log_action(db, user, "update_settings", "SiteSetting", None)
+    return templates.TemplateResponse(request, "admin_settings.html", {
+        "request": request, "user": user, "settings": _get_settings(db),
+        "error": None, "success": "Site settings saved.",
+    })
+
+
+# ── Admin: Users ──────────────────────────────────────────────────────────────
+@app.get("/admin/users", include_in_schema=False)
+def admin_users(request: Request, db: Session = Depends(get_db)):
+    user = get_current_user(request)
+    if not user:
+        return _admin_redirect_login()
+    if user["role"] != "admin":
+        return templates.TemplateResponse(request, "admin_users.html", {
+            "request": request, "user": user, "users": [], "error": None, "success": None,
+        }, status_code=403)
+    users = db.query(AdminUser).order_by(AdminUser.id).all()
+    return templates.TemplateResponse(request, "admin_users.html", {
+        "request": request, "user": user, "users": users,
+        "error": None, "success": None,
+    })
+
+
+@app.post("/admin/users/create", include_in_schema=False)
+async def admin_user_create(request: Request, db: Session = Depends(get_db)):
+    user = get_current_user(request)
+    if not user or user["role"] != "admin":
+        return _admin_redirect_login()
+    form = await request.form()
+    username = (form.get("username") or "").strip()[:50]
+    email = (form.get("email") or "").strip()[:255]
+    password = form.get("password") or ""
+    role = (form.get("role") or "editor").strip()[:20]
+    if not username or not email or len(password) < 6:
+        return templates.TemplateResponse(request, "admin_users.html", {
+            "request": request, "user": user,
+            "users": db.query(AdminUser).order_by(AdminUser.id).all(),
+            "error": "Username, email and a 6+ char password are required.", "success": None,
+        })
+    try:
+        create_admin_user(db, username, email, password, role=role if role in ("admin", "editor", "viewer") else "editor")
+        log_action(db, user, "create_user", "AdminUser", None)
+    except Exception as e:
+        return templates.TemplateResponse(request, "admin_users.html", {
+            "request": request, "user": user,
+            "users": db.query(AdminUser).order_by(AdminUser.id).all(),
+            "error": f"Could not create user: {e}", "success": None,
+        })
+    return RedirectResponse(url="/admin/users", status_code=303)
+
+
+@app.post("/admin/users/{user_id}/toggle", include_in_schema=False)
+def admin_user_toggle(request: Request, user_id: int, db: Session = Depends(get_db)):
+    user = get_current_user(request)
+    if not user or user["role"] != "admin":
+        return _admin_redirect_login()
+    target = db.get(AdminUser, user_id)
+    if target and target.username != user["username"]:
+        target.is_active = not target.is_active
+        db.commit()
+        log_action(db, user, "toggle_user", "User", user_id)
+    return RedirectResponse(url="/admin/users", status_code=303)
+
+
+# ── Admin: Audit logs ─────────────────────────────────────────────────────────
+@app.get("/admin/logs", include_in_schema=False)
+def admin_logs(request: Request, user_filter: str = "", db: Session = Depends(get_db)):
+    user = get_current_user(request)
+    if not user:
+        return _admin_redirect_login()
+    q = db.query(AuditLog)
+    if user_filter:
+        q = q.filter(AuditLog.user == user_filter)
+    logs = q.order_by(AuditLog.timestamp.desc()).limit(100).all()
+    all_users = db.query(AdminUser).order_by(AdminUser.username).all()
+    return templates.TemplateResponse(request, "admin_logs.html", {
+        "request": request, "user": user, "logs": logs,
+        "all_users": all_users, "user_filter": user_filter,
+    })

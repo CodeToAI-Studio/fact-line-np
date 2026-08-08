@@ -1,0 +1,108 @@
+{% extends "admin_base.html" %}
+
+{% block title %}Dashboard{% endblock %}
+{% block page_title %}Dashboard{% endblock %}
+
+{% block content %}
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-label">Total Posts</div>
+        <div class="stat-value">{{ stats.total_posts }}</div>
+        <div class="stat-change">{{ stats.published_posts }} published</div>
+    </div>
+
+    <div class="stat-card">
+        <div class="stat-label">Pending Approval</div>
+        <div class="stat-value">{{ stats.pending_posts }}</div>
+        <div class="stat-change">{{ stats.rejected_posts }} rejected</div>
+    </div>
+
+    <div class="stat-card">
+        <div class="stat-label">Total Articles</div>
+        <div class="stat-value">{{ stats.total_articles }}</div>
+        <div class="stat-change">{{ stats.unclustered_articles }} unclustered</div>
+    </div>
+
+    <div class="stat-card">
+        <div class="stat-label">Published Today</div>
+        <div class="stat-value">{{ stats.published_today }}</div>
+        <div class="stat-change">FB: {{ stats.fb_published }}, IG: {{ stats.ig_published }}</div>
+    </div>
+</div>
+
+<div class="admin-card">
+    <h2>Recent Posts</h2>
+    <div class="table-responsive">
+        <table>
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Title</th>
+                    <th>Language</th>
+                    <th>Region</th>
+                    <th>Status</th>
+                    <th>Created</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for post in recent_posts %}
+                <tr>
+                    <td>{{ post.id }}</td>
+                    <td>
+                        <strong>{{ post.title[:60] }}{% if post.title|length > 60 %}...{% endif %}</strong>
+                    </td>
+                    <td><span class="badge badge-info">{{ post.language }}</span></td>
+                    <td>{{ post.region or 'N/A' }}</td>
+                    <td>
+                        {% if post.status == 'approved' %}
+                        <span class="badge badge-success">Approved</span>
+                        {% elif post.status == 'pending' %}
+                        <span class="badge badge-warning">Pending</span>
+                        {% elif post.status == 'rejected' %}
+                        <span class="badge badge-danger">Rejected</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ post.created_at.strftime('%Y-%m-%d %H:%M') if post.created_at else 'N/A' }}</td>
+                    <td>
+                        <a href="/admin/posts/{{ post.id }}" class="btn btn-secondary btn-sm">Edit</a>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    <p style="margin-top:16px; text-align:right">
+        <a href="/admin/posts" class="btn btn-primary">View All Posts →</a>
+    </p>
+</div>
+
+<div class="admin-card">
+    <h2>Recent Activity</h2>
+    <div class="table-responsive">
+        <table>
+            <thead>
+                <tr>
+                    <th>User</th>
+                    <th>Action</th>
+                    <th>Entity</th>
+                    <th>Timestamp</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for log in recent_logs %}
+                <tr>
+                    <td><strong>{{ log.user }}</strong></td>
+                    <td>{{ log.action }}</td>
+                    <td>{{ log.entity_type }} #{{ log.entity_id if log.entity_id else '' }}</td>
+                    <td>{{ log.timestamp.strftime('%Y-%m-%d %H:%M:%S') if log.timestamp else 'N/A' }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    <p style="margin-top:16px; text-align:right">
+        <a href="/admin/logs" class="btn btn-primary">View All Logs →</a>
+    </p>
+</div>
+{% endblock %}

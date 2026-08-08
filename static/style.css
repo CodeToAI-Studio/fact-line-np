@@ -1,13 +1,13 @@
 /* FACT LINE NP Design System
-   Primary: #D4001A  Navy: #0A1628 */
+   Primary: #E31E24 (brand red from logo)  Navy: #0B1829 */
 @import url('https://fonts.googleapis.com/css2?family=Roboto+Condensed:wght@400;700&family=Noto+Sans:ital,wght@0,400;0,600;0,700;1,400&family=Noto+Sans+Devanagari:wght@400;600;700&display=swap');
 
 :root {
-  --fl-red:       #D4001A;
-  --fl-red-dark:  #A50015;
-  --fl-navy:      #0A1628;
-  --fl-navy-2:    #152238;
-  --fl-navy-3:    #1E3A5F;
+  --fl-red:       #E31E24;
+  --fl-red-dark:  #C41A1F;
+  --fl-navy:      #0B1829;
+  --fl-navy-2:    #162840;
+  --fl-navy-3:    #1F3350;
   --bg:           #F4F5F7;
   --bg-card:      #FFFFFF;
   --border:       #E2E6EA;
