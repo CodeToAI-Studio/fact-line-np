@@ -1,72 +1,99 @@
 """
 Admin authentication - session-based with secure cookies.
-No JWT complexity; sessions stored server-side in DB.
+
+Sessions are persisted in the database (admin_sessions table) so they survive
+process restarts and are shared across every worker/replica. A session created
+on one process is recognized by any other, which is required once this deploys
+behind a multi-worker WSGI/ASGI server (Railway, gunicorn, uvicorn --workers).
 """
 import secrets
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 from fastapi import Request, HTTPException, status
 from fastapi.responses import RedirectResponse
-from sqlalchemy.orm import Session
-from admin_models import AdminUser
-
-
-# In-memory session store (for simplicity; move to Redis/DB for multi-instance)
-# Format: {session_id: {"user_id": int, "username": str, "role": str, "expires": datetime}}
-_sessions = {}
+from sqlalchemy.orm import Session as DbSession
+from admin_models import AdminUser, AdminSession
 
 SESSION_COOKIE_NAME = "flnp_admin_session"
 SESSION_DURATION_HOURS = 24
+# Sweep expired rows occasionally; every get does it cheaply via index.
+_SWEEP_PROBABILITY = 0.05
 
 
-def create_session(user: AdminUser) -> str:
-    """Create a new session for authenticated user. Returns session_id."""
+def create_session(db: DbSession, user: AdminUser) -> str:
+    """Persist a new session for authenticated user. Returns session_id."""
     session_id = secrets.token_urlsafe(32)
     expires = datetime.now(timezone.utc) + timedelta(hours=SESSION_DURATION_HOURS)
-
-    _sessions[session_id] = {
-        "user_id": user.id,
-        "username": user.username,
-        "email": user.email,
-        "role": user.role,
-        "expires": expires,
-    }
-
+    row = AdminSession(
+        session_id=session_id,
+        user_id=user.id,
+        username=user.username,
+        role=user.role,
+        email=user.email,
+        expires_at=expires,
+    )
+    db.add(row)
+    db.commit()
     return session_id
 
 
-def get_session(session_id: str) -> Optional[dict]:
-    """Get session data if valid, None otherwise."""
-    if not session_id or session_id not in _sessions:
+def get_session(db: DbSession, session_id: str) -> Optional[dict]:
+    """Return session data if valid, None otherwise. Expired rows are removed."""
+    if not session_id:
         return None
-
-    session = _sessions[session_id]
-
-    # Check expiry
-    if session["expires"] < datetime.now(timezone.utc):
-        del _sessions[session_id]
+    row = db.get(AdminSession, session_id)
+    if not row:
         return None
+    now = datetime.now(timezone.utc)
+    if row.expires_at < now:
+        db.delete(row)
+        db.commit()
+        return None
+    return {
+        "user_id": row.user_id,
+        "username": row.username,
+        "email": row.email,
+        "role": row.role,
+        "expires": row.expires_at.isoformat(),
+    }
 
-    return session
 
-
-def delete_session(session_id: str):
+def delete_session(db: DbSession, session_id: str):
     """Destroy session (logout)."""
-    if session_id in _sessions:
-        del _sessions[session_id]
+    if not session_id:
+        return
+    row = db.get(AdminSession, session_id)
+    if row:
+        db.delete(row)
+        db.commit()
 
 
-def get_current_user(request: Request) -> Optional[dict]:
+def _sweep_expired(db: DbSession):
+    """Best-effort cleanup of expired sessions (called ~5% of reads)."""
+    try:
+        expired = db.query(AdminSession).filter(
+            AdminSession.expires_at < datetime.now(timezone.utc)
+        ).delete()
+        if expired:
+            db.commit()
+    except Exception:
+        db.rollback()
+
+
+def get_current_user(request: Request, db: DbSession) -> Optional[dict]:
     """Extract current user from session cookie. Returns session dict or None."""
     session_id = request.cookies.get(SESSION_COOKIE_NAME)
     if not session_id:
         return None
-    return get_session(session_id)
+    import random
+    if random.random() < _SWEEP_PROBABILITY:
+        _sweep_expired(db)
+    return get_session(db, session_id)
 
 
-def require_auth(request: Request) -> dict:
+def require_auth(request: Request, db: DbSession) -> dict:
     """Require authentication. Raises 401 if not logged in."""
-    user = get_current_user(request)
+    user = get_current_user(request, db)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -75,9 +102,9 @@ def require_auth(request: Request) -> dict:
     return user
 
 
-def require_role(request: Request, allowed_roles: list[str]) -> dict:
+def require_role(request: Request, db: DbSession, allowed_roles: list[str]) -> dict:
     """Require specific role(s). Raises 403 if insufficient permissions."""
-    user = require_auth(request)
+    user = require_auth(request, db)
     if user["role"] not in allowed_roles:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -91,7 +118,7 @@ def login_redirect() -> RedirectResponse:
     return RedirectResponse(url="/admin/login", status_code=status.HTTP_303_SEE_OTHER)
 
 
-def authenticate_user(db: Session, username: str, password: str) -> Optional[AdminUser]:
+def authenticate_user(db: DbSession, username: str, password: str) -> Optional[AdminUser]:
     """Verify credentials. Returns user object if valid, None otherwise."""
     user = db.query(AdminUser).filter(
         AdminUser.username == username,
@@ -108,7 +135,7 @@ def authenticate_user(db: Session, username: str, password: str) -> Optional[Adm
     return user
 
 
-def create_admin_user(db: Session, username: str, email: str, password: str, role: str = "editor") -> AdminUser:
+def create_admin_user(db: DbSession, username: str, email: str, password: str, role: str = "editor") -> AdminUser:
     """Create a new admin user. Used for initial setup."""
     user = AdminUser(
         username=username,
@@ -123,7 +150,7 @@ def create_admin_user(db: Session, username: str, email: str, password: str, rol
     return user
 
 
-def log_action(db: Session, user: dict, action: str, entity_type: str = None,
+def log_action(db: DbSession, user: dict, action: str, entity_type: str = None,
                entity_id: int = None, details: dict = None, ip: str = None):
     """Write to audit log."""
     from admin_models import AuditLog

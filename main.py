@@ -51,6 +51,9 @@ logger = logging.getLogger("factlinenp")
 # not hardcoded, so they can be tuned per-deployment without a code change.
 RATE_LIMIT_SYNTHESIS = os.getenv("RATE_LIMIT_SYNTHESIS", "10/minute")
 RATE_LIMIT_QUERY = os.getenv("RATE_LIMIT_QUERY", "30/minute")
+# Login is the brute-force target (the door to editing the whole site); tighten
+# it. This mirrors the existing per-IP model used for the Gemini endpoints.
+RATE_LIMIT_ADMIN_LOGIN = os.getenv("RATE_LIMIT_ADMIN_LOGIN", "10/minute")
 
 limiter = Limiter(key_func=get_remote_address)
 
@@ -74,20 +77,41 @@ async def lifespan(app: FastAPI):
     if GEMINI_API_KEY:
         llm_client = genai.Client(api_key=GEMINI_API_KEY)
 
-    # Seed default site settings and initial admin user on first run
+    # Seed default site settings and admin user on first run.
+    # Admin credentials are REQUIRED environment variables — there is no
+    # default. A hardcoded fallback password would ship with the source code
+    # and be trivially known to any attacker reading the repo.
+    admin_u = os.getenv("ADMIN_USERNAME", "").strip()
+    admin_p = os.getenv("ADMIN_PASSWORD", "").strip()
+    admin_e = os.getenv("ADMIN_EMAIL", "").strip()
+    if not (admin_u and admin_p and admin_e):
+        raise RuntimeError(
+            "ADMIN_USERNAME, ADMIN_PASSWORD and ADMIN_EMAIL must be set in the "
+            "environment. Refusing to start with a default admin password."
+        )
+    if len(admin_p) < 8:
+        raise RuntimeError("ADMIN_PASSWORD must be at least 8 characters long.")
+
     db = SessionLocal()
     try:
         for key, (value, value_type, desc) in DEFAULT_SETTINGS.items():
             if not db.get(SiteSetting, key):
                 db.add(SiteSetting(key=key, value=value, value_type=value_type, description=desc))
-        if db.query(AdminUser).count() == 0:
-            admin_u = os.getenv("ADMIN_USERNAME", "admin")
-            admin_p = os.getenv("ADMIN_PASSWORD", "FactLineNP2026!")
-            admin_e = os.getenv("ADMIN_EMAIL", "admin@factlinenp.com")
+
+        admin_user = db.query(AdminUser).filter(AdminUser.username == admin_u).first()
+        if not admin_user:
             u = AdminUser(username=admin_u, email=admin_e, role="admin", is_active=True)
             u.set_password(admin_p)
             db.add(u)
-            logger.info("Created default admin user: %s", admin_u)
+            logger.info("Created admin user: %s", admin_u)
+        elif not admin_user.check_password(admin_p):
+            # Exists but hash doesn't verify (e.g. migrated from the old
+            # unsalted sha256 scheme, or the env password changed). Re-issue
+            # the hash so the configured password works again.
+            admin_user.set_password(admin_p)
+            admin_user.email = admin_e
+            admin_user.role = admin_user.role or "admin"
+            logger.warning("Admin user %s password re-issued from env.", admin_u)
         db.commit()
     finally:
         db.close()
@@ -884,12 +908,13 @@ def _save_setting(db, key: str, value: str, user: dict):
 
 # ── Admin: Login / Logout ─────────────────────────────────────────────────────
 @app.get("/admin/login", include_in_schema=False)
-def admin_login_page(request: Request):
-    if get_current_user(request):
+def admin_login_page(request: Request, db: Session = Depends(get_db)):
+    if get_current_user(request, db):
         return RedirectResponse(url="/admin", status_code=303)
     return templates.TemplateResponse(request, "admin_login.html", {"request": request})
 
 @app.post("/admin/login", include_in_schema=False)
+@limiter.limit(RATE_LIMIT_ADMIN_LOGIN)
 async def admin_login(request: Request, db: Session = Depends(get_db)):
     form = await request.form()
     username = (form.get("username") or "").strip()[:50]
@@ -900,17 +925,17 @@ async def admin_login(request: Request, db: Session = Depends(get_db)):
         return templates.TemplateResponse(request, "admin_login.html", {
             "request": request, "error": "Invalid username or password."
         }, status_code=401)
-    session_id = create_session(user)
+    session_id = create_session(db, user)
     log_action(db, {"username": user.username}, "login_success", ip=request.client.host if request.client else None)
     resp = RedirectResponse(url="/admin", status_code=303)
     resp.set_cookie(SESSION_COOKIE_NAME, session_id, httponly=True, samesite="lax", max_age=86400)
     return resp
 
 @app.post("/admin/logout", include_in_schema=False)
-def admin_logout(request: Request):
+def admin_logout(request: Request, db: Session = Depends(get_db)):
     sid = request.cookies.get(SESSION_COOKIE_NAME)
     if sid:
-        delete_session(sid)
+        delete_session(db, sid)
     resp = RedirectResponse(url="/admin/login", status_code=303)
     resp.delete_cookie(SESSION_COOKIE_NAME)
     return resp
@@ -919,7 +944,7 @@ def admin_logout(request: Request):
 # ── Admin: Dashboard ──────────────────────────────────────────────────────────
 @app.get("/admin", include_in_schema=False)
 def admin_dashboard(request: Request, db: Session = Depends(get_db)):
-    user = get_current_user(request)
+    user = get_current_user(request, db)
     if not user:
         return _admin_redirect_login()
     from datetime import datetime, timezone, timedelta
@@ -951,7 +976,7 @@ def admin_dashboard(request: Request, db: Session = Depends(get_db)):
 # ── Admin: Posts (list / edit / delete) ───────────────────────────────────────
 @app.get("/admin/posts", include_in_schema=False)
 def admin_posts(request: Request, status_filter: str = "", db: Session = Depends(get_db)):
-    user = get_current_user(request)
+    user = get_current_user(request, db)
     if not user:
         return _admin_redirect_login()
     q = db.query(Post)
@@ -975,7 +1000,7 @@ def admin_posts(request: Request, status_filter: str = "", db: Session = Depends
 
 @app.get("/admin/posts/{post_id}", include_in_schema=False)
 def admin_post_edit(request: Request, post_id: int, db: Session = Depends(get_db)):
-    user = get_current_user(request)
+    user = get_current_user(request, db)
     if not user:
         return _admin_redirect_login()
     post = db.get(Post, post_id)
@@ -991,8 +1016,9 @@ def admin_post_edit(request: Request, post_id: int, db: Session = Depends(get_db
 
 
 @app.post("/admin/posts/{post_id}", include_in_schema=False)
+@limiter.limit("30/minute")
 async def admin_post_update(request: Request, post_id: int, db: Session = Depends(get_db)):
-    user = get_current_user(request)
+    user = get_current_user(request, db)
     if not user:
         return _admin_redirect_login()
     post = db.get(Post, post_id)
@@ -1044,8 +1070,9 @@ async def admin_post_update(request: Request, post_id: int, db: Session = Depend
 
 
 @app.post("/admin/posts/{post_id}/delete", include_in_schema=False)
+@limiter.limit("20/minute")
 async def admin_post_delete(request: Request, post_id: int, db: Session = Depends(get_db)):
-    user = get_current_user(request)
+    user = get_current_user(request, db)
     if not user:
         return _admin_redirect_login()
     if user["role"] != "admin":
@@ -1064,7 +1091,7 @@ async def admin_post_delete(request: Request, post_id: int, db: Session = Depend
 # ── Admin: Articles (ingested raw feed items) ─────────────────────────────────
 @app.get("/admin/articles", include_in_schema=False)
 def admin_articles(request: Request, limit: int = 100, db: Session = Depends(get_db)):
-    user = get_current_user(request)
+    user = get_current_user(request, db)
     if not user:
         return _admin_redirect_login()
     articles = db.query(Article).order_by(Article.created_at.desc()).limit(min(limit, 500)).all()
@@ -1082,7 +1109,7 @@ def admin_articles(request: Request, limit: int = 100, db: Session = Depends(get
 # ── Admin: Settings ───────────────────────────────────────────────────────────
 @app.get("/admin/settings", include_in_schema=False)
 def admin_settings(request: Request, db: Session = Depends(get_db)):
-    user = get_current_user(request)
+    user = get_current_user(request, db)
     if not user:
         return _admin_redirect_login()
     return templates.TemplateResponse(request, "admin_settings.html", {
@@ -1092,8 +1119,9 @@ def admin_settings(request: Request, db: Session = Depends(get_db)):
 
 
 @app.post("/admin/settings", include_in_schema=False)
+@limiter.limit("20/minute")
 async def admin_settings_save(request: Request, db: Session = Depends(get_db)):
-    user = get_current_user(request)
+    user = get_current_user(request, db)
     if not user:
         return _admin_redirect_login()
     if user["role"] not in ("admin", "editor"):
@@ -1116,7 +1144,7 @@ async def admin_settings_save(request: Request, db: Session = Depends(get_db)):
 # ── Admin: Users ──────────────────────────────────────────────────────────────
 @app.get("/admin/users", include_in_schema=False)
 def admin_users(request: Request, db: Session = Depends(get_db)):
-    user = get_current_user(request)
+    user = get_current_user(request, db)
     if not user:
         return _admin_redirect_login()
     if user["role"] != "admin":
@@ -1131,8 +1159,9 @@ def admin_users(request: Request, db: Session = Depends(get_db)):
 
 
 @app.post("/admin/users/create", include_in_schema=False)
+@limiter.limit("20/minute")
 async def admin_user_create(request: Request, db: Session = Depends(get_db)):
-    user = get_current_user(request)
+    user = get_current_user(request, db)
     if not user or user["role"] != "admin":
         return _admin_redirect_login()
     form = await request.form()
@@ -1159,8 +1188,9 @@ async def admin_user_create(request: Request, db: Session = Depends(get_db)):
 
 
 @app.post("/admin/users/{user_id}/toggle", include_in_schema=False)
+@limiter.limit("20/minute")
 def admin_user_toggle(request: Request, user_id: int, db: Session = Depends(get_db)):
-    user = get_current_user(request)
+    user = get_current_user(request, db)
     if not user or user["role"] != "admin":
         return _admin_redirect_login()
     target = db.get(AdminUser, user_id)
@@ -1174,7 +1204,7 @@ def admin_user_toggle(request: Request, user_id: int, db: Session = Depends(get_
 # ── Admin: Audit logs ─────────────────────────────────────────────────────────
 @app.get("/admin/logs", include_in_schema=False)
 def admin_logs(request: Request, user_filter: str = "", db: Session = Depends(get_db)):
-    user = get_current_user(request)
+    user = get_current_user(request, db)
     if not user:
         return _admin_redirect_login()
     q = db.query(AuditLog)

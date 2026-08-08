@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from sqlalchemy import Column, Integer, String, Text, DateTime, Boolean, JSON
 from models import Base
 import hashlib
+import hmac
 import secrets
 
 
@@ -16,32 +17,46 @@ class AdminUser(Base):
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String(50), unique=True, nullable=False, index=True)
     email = Column(String(255), unique=True, nullable=False, index=True)
-    password_hash = Column(String(128), nullable=False)  # SHA-256 + salt
+    password_hash = Column(String(255), nullable=False)  # format: salt$iterations$hash (PBKDF2-SHA256)
     role = Column(String(20), default="editor", nullable=False)  # admin, editor, viewer
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     last_login = Column(DateTime(timezone=True), nullable=True)
 
-    @staticmethod
-    def hash_password(password: str, salt: str = None) -> tuple[str, str]:
-        """Hash password with SHA-256 + random salt. Returns (hash, salt)."""
-        if salt is None:
-            salt = secrets.token_hex(16)
-        pwd_hash = hashlib.sha256((password + salt).encode()).hexdigest()
-        return pwd_hash, salt
+    # PBKDF2-HMAC-SHA256 parameters (OWASP recommended ~600k iterations, 2023).
+    # Deliberately slow: a fast general-purpose hash (plain sha256) would be
+    # crackable in bulk on GPU. Format stored: "salt$iterations$hash" so the
+    # iteration count can be raised later without a schema change.
+    PBKDF2_ITERATIONS = 600_000
+    PBKDF2_SALT_BYTES = 16
+    PBKDF2_HASH_BYTES = 32
+
+    @classmethod
+    def _derive(cls, password: str, salt: bytes, iterations: int) -> str:
+        return hashlib.pbkdf2_hmac("sha256", password.encode(), salt, iterations).hex()
 
     def set_password(self, password: str):
-        """Hash and store password."""
-        pwd_hash, salt = self.hash_password(password)
-        self.password_hash = f"{salt}${pwd_hash}"
+        """Hash and store password using PBKDF2-HMAC-SHA256 + random salt."""
+        salt = secrets.token_bytes(self.PBKDF2_SALT_BYTES)
+        digest = self._derive(password, salt, self.PBKDF2_ITERATIONS)
+        self.password_hash = f"{salt.hex()}${self.PBKDF2_ITERATIONS}${digest}"
 
     def check_password(self, password: str) -> bool:
-        """Verify password against stored hash."""
+        """Verify password against stored hash (constant-time compare)."""
         if not self.password_hash or "$" not in self.password_hash:
             return False
-        salt, stored_hash = self.password_hash.split("$", 1)
-        pwd_hash, _ = self.hash_password(password, salt)
-        return pwd_hash == stored_hash
+        parts = self.password_hash.split("$")
+        if len(parts) != 3:
+            return False
+        salt_hex, iterations_str, stored_hash = parts
+        try:
+            salt = bytes.fromhex(salt_hex)
+            iterations = int(iterations_str)
+        except ValueError:
+            return False
+        digest = self._derive(password, salt, iterations)
+        # hmac.compare_digest prevents timing side-channels on the compare.
+        return hmac.compare_digest(digest, stored_hash)
 
 
 class SiteSetting(Base):
@@ -68,6 +83,20 @@ class AuditLog(Base):
     details = Column(JSON, nullable=True)  # store before/after values, etc.
     ip_address = Column(String(45), nullable=True)
     timestamp = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+
+
+class AdminSession(Base):
+    """Auth session persisted in the DB so it survives restarts and is shared
+    across any number of app processes/workers. One row per active session."""
+    __tablename__ = "admin_sessions"
+
+    session_id = Column(String(64), primary_key=True)               # secrets.token_urlsafe(32)
+    user_id = Column(Integer, nullable=False, index=True)           # AdminUser.id
+    username = Column(String(50), nullable=False)                   # denormalized for speed
+    role = Column(String(20), nullable=False)
+    email = Column(String(255), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
 
 
 # Default site settings to seed on first run

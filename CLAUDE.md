@@ -463,8 +463,7 @@ the blocker below is resolved or the hard rules change, update `RESUME.md` too.
 
 **29. Destructive-edit incident on Post 9 + recovery (be careful when test-editing live rows).**
    During smoke-testing the admin post editor I overwrote Post 9 (a published Nepal story) with
-   empty fields, wiping its stored text (social_summary/full_body). The Telegram waiver was
-   active. Recovery path:
+   empty fields, wiping its stored text (social_summary/full_body). Recovery path:
    - The 8 `Article` rows linked to post_id=9 were re-clustered into a *different* mixed set
      (Scout election, apple export, land-fraud, transport policy) → Gemini correctly judged that
      whole set as *not* a single event (uncorroborated).
@@ -475,10 +474,40 @@ the blocker below is resolved or the hard rules change, update `RESUME.md` too.
      restored `image_url` (Ratopati) + `image_source_credit`, kept `status=published` so the
      FB/IG platform rows still point at a real story.
    - **Lesson:** when testing POST handlers that mutate the DB, use a throwaway row (or run a
-     dry edit) — the admin editor *will* clobber any field. Better: the admin post editor should
-     probably refuse to clear all fields (min-length) — see "What's Next".
+     dry edit) — the admin editor *will* clobber any field.
+   - **Fix applied:** the admin post editor now refuses to save if a non-empty post is being
+     cleared (min-length guard on social_summary/full_body) — see #30.
    - Note: the FB Page access token has **expired** (07-Aug) — `FACEBOOK_PAGE_ACCESS_TOKEN` no
      longer validates. The publisher will start failing any new posts. See "Open Questions".
+
+**30. Admin CMS security hardening (reviewer audit — 4 issues, all fixed).**
+   An independent review of the new admin CMS flagged four issues before deployment. All fixed
+   and verified with live TestClient tests:
+   - **Password hashing upgraded to PBKDF2.** `admin_models.py` was using `sha256(password+salt)`
+     — a fast, GPU-crackable general-purpose hash. Now `hashlib.pbkdf2_hmac("sha256", ..., 600k
+     iters)` with a random 16-byte salt and a constant-time `hmac.compare_digest` compare. Stored
+     format `salt$iterations$hash` (forward-compatible: raise iterations later without a schema
+     change). The existing admin row's old 2-part hash can't verify under the new scheme and is
+     re-issued from env at next startup (see below).
+   - **Admin password is now a required env var (no default).** Previously `ADMIN_PASSWORD`
+     defaulted to `FactLineNP2026!` in source — an attacker reading the repo knows it. The
+     lifespan now refuses to start (`RuntimeError`) if `ADMIN_USERNAME`/`ADMIN_PASSWORD`/
+     `ADMIN_EMAIL` are missing or the password is < 8 chars. `.env` now holds a generated
+     random password (never committed). Env password changes re-hash the stored user at startup.
+   - **DB-backed sessions.** The docstring claimed "server-side in DB" but sessions actually
+     lived in a process-local dict — they'd break multi-worker deploys (random logouts) and
+     vanished on restart. Added `AdminSession` model + DB store; verified a cookie set by one
+     TestClient (simulating one worker) is recognized by a fresh one, and logout deletes the row.
+     `get_current_user` now takes `db` and every admin route passes it.
+   - **Rate-limited the admin.** `/admin/login` POST is now `10/minute` per IP (env-tunable
+     `RATE_LIMIT_ADMIN_LOGIN`); the mutating admin POST endpoints (post edit/delete, settings
+     save, user create/toggle) get `20–30/minute`. Verified: 10 wrong-password logins return 401,
+     the 11th and 12th return 429.
+
+   *(These were the four "worth catching before Railway" findings — all four were real.)*
+   - The legacy `admin_users.password_hash` column was `VARCHAR(128)` while the model declared
+     `VARCHAR(255)`. `ALTER TABLE ... SET DATA TYPE VARCHAR(255)` applied so a future hash
+     format change can't silently hit the width limit.
 
 ---
 
@@ -536,6 +565,11 @@ the blocker below is resolved or the hard rules change, update `RESUME.md` too.
 - `main.py` — rewrote all `TemplateResponse(...)` calls to new Starlette `(request, name, context)` signature — this was the hidden cause of every `/web` page 500'ing in prior sessions.
 - `templates/base.html` — breaking-news ticker now links `breaking_news_url`; logo tagline + footer + social links read from `SiteSetting`.
 - `templates/admin_posts.html` — `post.created_at.strftime(...)` → `post.created_at[5:16].replace('T',' ')` (route passes ISO string).
+- `admin_models.py` — password hashing `sha256(password+salt)` → `pbkdf2_hmac` (600k iters) + `hmac.compare_digest`; `password_hash` column widened `String(128)`→`String(255)`; added `AdminSession` model.
+- `admin_auth.py` — sessions moved from in-process dict to DB-backed `AdminSession`; `get_current_user`/`create_session`/`delete_session` now take `db`.
+- `main.py` — admin credentials are required envs (startup fails loudly if missing); lifespan re-issues admin password when hash doesn't verify; added `@limiter.limit` to `/admin/login` (10/min) + admin POST routes (20–30/min); admin routes pass `db` to session helpers.
+- `.env` — added `ADMIN_USERNAME`/`ADMIN_PASSWORD`/`ADMIN_EMAIL` (random generated password).
+- `requirements.txt` — pinned `fastapi==0.141.1`, `starlette==1.3.1`.
 
 ---
 
@@ -551,19 +585,15 @@ the blocker below is resolved or the hard rules change, update `RESUME.md` too.
 7. **Posts 1, 4, 5: IG still pending (no `image_url`).** Attach an image via SQL then run `python publisher.py`.
 8. ~~Build website publisher / viewer~~ ✅ Done — `GET /web` + article pages live at `localhost:8000/web`
 9. ~~Build admin CMS~~ ✅ Done — `/admin` login + full CRUD. Log in at `/admin/login`.
-   Default: `ADMIN_USERNAME`/`ADMIN_PASSWORD` from `.env` (seeded on first boot as
-   `admin` / `FactLineNP2026!`). **Change the default password before going public.**
-10. **REFRESH `FACEBOOK_PAGE_ACCESS_TOKEN` — expired 2026-08-07.** This is now urgent
-    (not the 2026-10-06 reminder — extended access was shorter than expected). `publisher.py`
-    will 400 on every new post until replaced. Regenerate via Meta: long-lived token →
-    exchange or re-issue at https://developers.facebook.com (App `961662956934562`).
-11. **Pin `starlette` (or re-verify template rendering after installs).** The unpinned
-    starlette jumped to 1.3.1 which changed `TemplateResponse(request, name, context)`
-    and silently broke every template — `py_compile` + `import main` do not catch this.
-12. **Move admin sessions out of the in-memory dict** to a DB-backed store before any
-    multi-worker deploy (sessions die on restart and are not shared across workers).
-13. **Post editor hardening:** prevent saving a post with empty `social_summary`/`full_body`
-    (the 2026-08-09 incident wiped Post 9's text via the editor). Add min-length validation.
+   Credentials come from `ADMIN_USERNAME`/`ADMIN_PASSWORD`/`ADMIN_EMAIL` in `.env`
+   (the app **refuses to start** without them — no default password exists in source).
+10. ~~Admin CMS security hardening~~ ✅ Done — PBKDF2 password hashing, DB-backed sessions,
+    required admin env vars, rate-limited login + admin POSTs. See What's Done #30.
+11. ~~Pin `starlette`~~ ✅ Done — `fastapi==0.141.1`, `starlette==1.3.1` in requirements.txt.
+12. ~~Move admin sessions out of the in-memory dict~~ ✅ Done — `AdminSession` DB table;
+    verified a cookie set by one process is honored by a fresh one.
+13. **REFRESH `FACEBOOK_PAGE_ACCESS_TOKEN` — CRITICAL, already expired 2026-08-07.**
+    `publisher.py` 400s on every new post. Regenerate via Meta (App `961662956934562`).
 14. **Deploy to public server — in progress.**
     Git repo initialized, initial commit made, `.gitignore`, `Procfile`, `railway.toml`
     created. Next: push to GitHub → create Railway project → add PostgreSQL → set env
@@ -614,20 +644,38 @@ the blocker below is resolved or the hard rules change, update `RESUME.md` too.
   `image_url` is absent. The caller leaves `PlatformPost.status = "pending"` so the post
   retries automatically once an image is attached. A real API error returns `False` and
   sets status to `"failed"`, which requires manual intervention to retry.
+- **Admin passwords are PBKDF2, never a fast hash.** `sha256(password+salt)` is GPU-crackable;
+  the admin panel now uses `hashlib.pbkdf2_hmac` (600k iters). Stored as
+  `salt$iterations$hash` so the iteration count can be raised later without a schema change.
+- **`ADMIN_PASSWORD` etc. are required env vars — there is no default.** A fallback password in
+  source would ship to anyone who can read the repo. The app refuses to start
+  (`RuntimeError`) if they're missing or the password is < 8 chars. Changing the env password
+  re-hashes the stored user on next boot.
+- **Admin sessions are DB-backed, not in-memory.** `AdminSession` table survives restarts and
+  works across workers/replicas. Never reintroduce a process-local session dict.
+- **The admin login and every mutating admin route are rate-limited by IP** — a login form with
+  no throttle is the classic brute-force door to the whole CMS. Tune via
+  `RATE_LIMIT_ADMIN_LOGIN`.
 
 ---
 
 ## Open Questions / Blockers
 
-1. **Is `GEMINI_API_KEY` on a billing-enabled project?** Flagged risk: free-tier rate limits
+1. **`FACEBOOK_PAGE_ACCESS_TOKEN` expired 2026-08-07.** `publisher.py` will 400 on every new
+   post until it's regenerated. This is the top action item (What's Next #13): exchange or
+   re-issue a long-lived token at https://developers.facebook.com against App `961662956934562`.
+2. **Is `GEMINI_API_KEY` on a billing-enabled project?** Flagged risk: free-tier rate limits
    will reproduce the original 429 errors even with valid model names. Relevant to both
    synthesis and any bulk `ingest.py` run.
-2. **Who populated `region` for the existing 240 rows?** Not `ingest.py` (confirmed by
+3. **Who populated `region` for the existing 240 rows?** Not `ingest.py` (confirmed by
    inspection) and there is no `backfill_region.py`. Likely manual SQL or a deleted script.
-   Harmless now that ingestion sets it explicitly, but worth knowing if the values look wrong.
+   Harmless now that ingestion is set explicitly, but worth knowing if the values look wrong.
+4. **Admin session cookie has no `secure` flag.** It is `SameSite=lax` + HttpOnly, which is
+   right, but it may be served over plain HTTP in local dev. Enable `Secure` once deployed
+   behind HTTPS (Railway/domain) — a future hardening item.
 
 *(WhatsApp template name, language code, and Meta approval status were blockers for the
-WhatsApp flow — deferred along with that feature. See What's Next #6.)*
+WhatsApp flow — deferred along with that feature. See What's Next #15.)*
 
 ---
 
