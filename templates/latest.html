@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Latest News — Fact Line NP{% endblock %}
+{% set current_page = 'latest' %}
+{% block content %}
+<div class="page-band"><div class="container">
+  <h1>Latest News</h1>
+  <div class="cat-count">Most recent stories</div>
+</div></div>
+<div class="page-wrap"><div class="container">
+  <div class="two-col">
+    <div>
+      {% for post in posts %}
+      <div class="list-item">
+        <a href="/web/post/{{ post.id }}">
+          {% if post.image_url %}<img src="{{ post.image_url }}" alt="" loading="lazy"/>
+          {% else %}<div class="img-placeholder" style="width:80px;min-width:80px;height:62px;border-radius:2px">📰</div>{% endif %}
+        </a>
+        <div class="list-item-body">
+          <div class="meta-row">
+            <span class="cat-badge {{ post.category or '' }}" style="font-size:.62rem">{{ (post.category or 'news') | title }}</span>
+            <span class="meta-time">{{ post.created_at[:10] if post.created_at }}</span>
+          </div>
+          <a href="/web/post/{{ post.id }}" class="list-item-title {% if post.language == 'nepali' %}nepali{% endif %}">{{ post.social_summary[:140] }}</a>
+        </div>
+      </div>
+      {% else %}
+      <div class="no-results"><p>No published stories yet.</p></div>
+      {% endfor %}
+    </div>
+    <aside class="sidebar">
+      <div class="sidebar-block">
+        <div class="sidebar-hd">Browse by Category</div>
+        {% for cat in all_categories %}
+        <a href="/web/category/{{ cat }}" style="display:block;padding:7px 0;font-size:.82rem;border-bottom:1px solid var(--border);color:var(--text-2)">{{ cat | title }}</a>
+        {% endfor %}
+      </div>
+    </aside>
+  </div>
+</div></div>
+{% endblock %}

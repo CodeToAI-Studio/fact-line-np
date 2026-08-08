@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block title %}{{ post.social_summary[:70] }} — Fact Line NP{% endblock %}
+{% block og_title %}{{ post.social_summary[:100] }}{% endblock %}
+{% set meta_desc = post.social_summary[:160] %}
+{% set og_image = post.image_url %}
+{% block content %}
+<div class="page-wrap">
+<div class="container">
+  <div class="two-col">
+    <div class="article-wrap">
+      <a href="javascript:history.back()" class="back-link">&larr; Back</a>
+      <div class="article-header">
+        <div class="meta-row">
+          <span class="cat-badge {{ post.category or '' }}">{{ (post.category or 'news') | title }}</span>
+          {% if post.region %}<span class="cat-badge {{ post.region }}">{{ post.region | title }}</span>{% endif %}
+          {% if post.language == 'nepali' %}<span class="cat-badge" style="background:#7c3aed">Nepali</span>{% endif %}
+        </div>
+        <h1 class="article-title {% if post.language == 'nepali' %}nepali{% endif %}">{{ post.social_summary }}</h1>
+        <div class="article-byline">
+          <span class="article-author">Fact Line NP</span>
+          <span class="article-date">{{ post.created_at[:16].replace('T',' ') if post.created_at }}</span>
+          <span class="article-readtime">{{ reading_time }} min read</span>
+        </div>
+      </div>
+
+      {% if post.image_url %}
+      <div class="article-hero">
+        <img src="{{ post.image_url }}" alt="{{ post.social_summary[:60] }}" loading="eager"/>
+      </div>
+      {% if post.image_source_credit %}<p class="article-img-caption">{{ post.image_source_credit }}</p>{% endif %}
+      {% endif %}
+
+      <div class="article-lede {% if post.language == 'nepali' %}nepali{% endif %}">{{ post.social_summary }}</div>
+
+      <div class="article-body {% if post.language == 'nepali' %}nepali{% endif %}">
+        {% for para in post.full_body.split('\n\n') %}
+        {% if para.strip() %}<p>{{ para.strip() }}</p>{% endif %}
+        {% endfor %}
+      </div>
+
+      <div class="share-bar">
+        <span class="share-label">Share</span>
+        <a id="share-fb" href="#" class="share-btn share-fb" target="_blank" rel="noopener">Facebook</a>
+        <a id="share-tw" href="#" class="share-btn share-tw" target="_blank" rel="noopener">X / Twitter</a>
+        <a id="share-wa" href="#" class="share-btn share-wa" target="_blank" rel="noopener">WhatsApp</a>
+        <button onclick="copyLink()" class="share-btn share-copy">Copy Link</button>
+      </div>
+
+      <div class="article-tags">
+        {% if post.category %}<a href="/web/category/{{ post.category }}" class="article-tag">{{ post.category | title }}</a>{% endif %}
+        {% if post.region %}<a href="/web/category/{{ post.region }}" class="article-tag">{{ post.region | title }}</a>{% endif %}
+        <span class="article-tag">Fact Line NP</span>
+      </div>
+
+      {% if related %}
+      <div class="related-section">
+        <div class="section-hd"><h2>Related Stories</h2></div>
+        <div class="related-grid">
+          {% for rp in related %}
+          <a href="/web/post/{{ rp.id }}" class="card">
+            {% if rp.image_url %}<img src="{{ rp.image_url }}" alt="" loading="lazy"/>
+            {% else %}<div class="img-placeholder" style="height:130px">📰</div>{% endif %}
+            <div class="card-body">
+              <div class="card-title {% if rp.language == 'nepali' %}nepali{% endif %}" style="font-size:.85rem">{{ rp.social_summary[:100] }}</div>
+              <div class="meta-time">{{ rp.created_at[:10] if rp.created_at }}</div>
+            </div>
+          </a>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+    </div>
+
+    <aside class="sidebar">
+      <div class="sidebar-block">
+        <div class="sidebar-hd">Most Read</div>
+        {% for mp in most_read %}
+        <div class="most-read-item">
+          <div class="mr-num {% if loop.index == 1 %}top{% endif %}">{{ loop.index }}</div>
+          <a href="/web/post/{{ mp.id }}" class="mr-title {% if mp.language == 'nepali' %}nepali{% endif %}">{{ mp.social_summary[:85] }}</a>
+        </div>
+        {% endfor %}
+      </div>
+      <div class="ad-block">Advertisement</div>
+    </aside>
+  </div>
+</div></div>
+
+<script>
+(function(){
+  var url=encodeURIComponent(location.href);
+  var title=encodeURIComponent(document.title);
+  var fb=document.getElementById('share-fb');
+  var tw=document.getElementById('share-tw');
+  var wa=document.getElementById('share-wa');
+  if(fb) fb.href='https://www.facebook.com/sharer/sharer.php?u='+url;
+  if(tw) tw.href='https://twitter.com/intent/tweet?url='+url+'&text='+title;
+  if(wa) wa.href='https://wa.me/?text='+title+'%20'+url;
+})();
+</script>
+{% endblock %}

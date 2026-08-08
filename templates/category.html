@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}{{ category | title }} News — Fact Line NP{% endblock %}
+{% set current_cat = category %}
+{% block content %}
+<div class="page-band"><div class="container">
+  <h1>{{ category | title }}</h1>
+  <div class="cat-count">{{ posts | length }} stories</div>
+</div></div>
+<div class="page-wrap"><div class="container">
+  <div class="two-col">
+    <div>
+      {% if posts %}
+      <div class="card-grid card-grid-2">
+        {% for post in posts %}
+        <a href="/web/post/{{ post.id }}" class="card">
+          {% if post.image_url %}<img src="{{ post.image_url }}" alt="" loading="lazy"/>
+          {% else %}<div class="img-placeholder" style="height:170px">📰</div>{% endif %}
+          <div class="card-body">
+            <div class="meta-row"><span class="cat-badge {{ post.category or '' }}">{{ (post.category or 'news') | title }}</span></div>
+            <div class="card-title {% if post.language == 'nepali' %}nepali{% endif %}">{{ post.social_summary[:130] }}</div>
+            <div class="meta-row"><span class="meta-time">{{ post.created_at[:10] if post.created_at }}</span></div>
+          </div>
+        </a>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="no-results"><p>No stories in this category yet. Check back soon.</p></div>
+      {% endif %}
+    </div>
+    <aside class="sidebar">
+      <div class="sidebar-block">
+        <div class="sidebar-hd">Other Categories</div>
+        {% for cat in all_categories %}
+        <a href="/web/category/{{ cat }}" style="display:block;padding:7px 0;font-size:.82rem;border-bottom:1px solid var(--border);color:var(--text-2)">{{ cat | title }}</a>
+        {% endfor %}
+      </div>
+    </aside>
+  </div>
+</div></div>
+{% endblock %}

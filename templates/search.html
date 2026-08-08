@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Search — Fact Line NP{% endblock %}
+{% block content %}
+<div class="page-band"><div class="container"><h1>Search</h1></div></div>
+<div class="page-wrap"><div class="container">
+  <form class="search-bar-wrap" method="get" action="/web/search">
+    <input class="search-input" type="search" name="q" value="{{ query | default('') }}" placeholder="Search stories..." maxlength="200" autocomplete="off"/>
+    <button type="submit" class="btn-primary">Search</button>
+  </form>
+  {% if query %}
+  <p style="margin-bottom:20px;font-size:.85rem;color:var(--text-muted)">{{ results | length }} result(s) for &ldquo;{{ query }}&rdquo;</p>
+  {% endif %}
+  {% if results %}
+  <div class="card-grid card-grid-2">
+    {% for post in results %}
+    <a href="/web/post/{{ post.id }}" class="card">
+      {% if post.image_url %}<img src="{{ post.image_url }}" alt="" loading="lazy"/>
+      {% else %}<div class="img-placeholder" style="height:150px">📰</div>{% endif %}
+      <div class="card-body">
+        <div class="meta-row"><span class="cat-badge {{ post.category or '' }}">{{ (post.category or 'news') | title }}</span></div>
+        <div class="card-title {% if post.language == 'nepali' %}nepali{% endif %}">{{ post.social_summary[:130] }}</div>
+        <div class="meta-time">{{ post.created_at[:10] if post.created_at }}</div>
+      </div>
+    </a>
+    {% endfor %}
+  </div>
+  {% elif query %}
+  <div class="no-results"><p>No stories found for &ldquo;{{ query }}&rdquo;. Try different keywords.</p></div>
+  {% endif %}
+</div></div>
+{% endblock %}

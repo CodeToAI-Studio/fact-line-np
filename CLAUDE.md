@@ -1,0 +1,547 @@
+# news-engine — Working Log & Handoff
+
+**Audience:** an AI or person with zero prior context. Everything needed to resume is in this
+file. Read it top to bottom before touching code.
+
+**Maintenance rule:** update this file continuously as work happens — not at session end.
+Every created/edited/deleted file goes in either "What's Done" (with reasoning) or
+"Small Changes Log" (one line). Keep "What's Next" reordered by priority.
+
+**Last updated:** 2026-08-08
+
+---
+
+## Project Overview
+
+A Python RAG (Retrieval-Augmented Generation) news pipeline for Nepali + international news.
+
+Flow: RSS feeds → `ingest.py` (fetch, clean, embed, store) → `generate_posts.py` (cluster
+same-event articles across outlets, enforce a 2+ independent-source rule, ask Gemini to draft
+a full article + a short social summary) → `Post` rows with `status="pending"` →
+`whatsapp_bot.py` sends each for human approval over WhatsApp → the approver taps
+Approve/Reject → `main.py`'s webhook flips `Post.status`. Separately, `main.py` serves a
+retrieval + synthesis API consumed by a Streamlit UI (`app.py`).
+
+### Stack
+- **Backend:** FastAPI (`main.py`). Routes are `async def` but the DB layer is **synchronous**
+  SQLAlchemy, so DB/embedding calls are wrapped in `run_in_threadpool`.
+- **DB:** PostgreSQL + `pgvector`. Vector search via `Article.embedding.cosine_distance(...)`.
+- **Embeddings:** Gemini `gemini-embedding-001` at 768 dimensions (`embeddings.py`).
+- **LLM:** Google Gemini via the `google-genai` SDK.
+- **Frontend:** Streamlit (`app.py`).
+- **Approval channel:** WhatsApp Business Cloud API. `telegram_bot.py` is the earlier
+  approval channel, still in the repo.
+
+### File map
+| File | Role |
+|---|---|
+| `main.py` | FastAPI app: `/articles`, `/query`, `/synthesize`, `/synthesize/stream`, WhatsApp webhook |
+| `models.py` | SQLAlchemy models — `Article`, `Post`, `PlatformPost` |
+| `app.py` | Streamlit frontend |
+| `embeddings.py` | Shared embedding helper — **the only** place embeddings are computed |
+| `llm_models.py` | Shared Gemini generation-model list + discovery fallback |
+| `ingest.py` | RSS ingestion → `Article` rows |
+| `search.py` | CLI vector search (debug tool) |
+| `rag_chat.py` | CLI RAG question-answering (debug tool) |
+| `generate_posts.py` | Clustering + verification + drafting → `Post` rows |
+| `backfill_category.py` | One-off: classify existing articles into categories |
+| `whatsapp_bot.py` | Outbound only — sends pending posts for approval |
+| `whatsapp_client.py` | Shared WhatsApp Cloud API client |
+| `main.py` webhook | Inbound — receives button taps (**not** in `whatsapp_bot.py`) |
+| `migrate_*.py` | One-off schema migrations |
+| `RESUME.md` | Self-contained prompt to paste into an AI chat with **no** repo access |
+| `PROJECT_BRIEFING.md` | Superseded by this file; kept as a pointer |
+
+---
+
+## What's Done
+
+### Earlier sessions (context, not verified line-by-line unless noted)
+- **Gemini model migration.** `gemini-2.0-flash` and `gemini-2.0-flash-lite` were retired by
+  Google on 2026-06-01 and now return 404. Replaced with `gemini-3.6-flash` (primary) and
+  `gemini-3.5-flash-lite` (fallback). This was the root cause of an earlier "Error 3" 404 bug.
+- **Dynamic model fallback.** If every hardcoded model name fails, call `client.models.list()`
+  and retry against whatever is actually live, preferring flash-tier models.
+- **Event-loop fix.** Synchronous `db.execute(...)` calls inside `async` FastAPI routes were
+  blocking the event loop; wrapped in `run_in_threadpool`.
+- **`model_used`** added to the synthesis response so you can see which model actually answered.
+- **SSE streaming.** `/synthesize/stream` streams tokens over Server-Sent Events.
+  `_stream_gemini_sync` (`main.py`) runs the SDK's blocking stream iterator on a background
+  thread and hands chunks to the event loop through an `asyncio.Queue`. Streamlit consumes it
+  via `stream_synthesis` (`app.py`). Both `/synthesize` and `/synthesize/stream` share
+  `_retrieve_and_build_prompt` so their grounding logic can't drift apart.
+- **Embedding migration.** Moved from local `sentence-transformers` (`all-MiniLM-L6-v2`,
+  384-dim) to Gemini (768-dim). Motivation was avoiding `torch`, whose native DLLs were being
+  blocked by Windows Smart App Control (see `embeddings.py` docstring). Vectors from two
+  models are not convertible, so `migrate_switch_to_gemini_embeddings.py` dropped the column
+  and re-embedded all rows from scratch.
+
+### Session 2026-08-06 (Claude Code)
+
+**1. Verified — the WhatsApp webhook in place is the correct version.** An earlier session
+flagged that a tool-generated replacement had three defects. Confirmed the *good* version is
+what's on disk: route is `@app.post("/webhooks/whatsapp")` (plural, must match Meta's console
+exactly); `_verify_whatsapp_signature` returns `False` when either the signature header or
+`WHATSAPP_APP_SECRET` is missing (fails **closed** — never treat a missing secret as verified);
+and the handler actually parses the button payload, updates `Post.status` to
+`"approved"`/`"rejected"`, and sends a confirmation reply. No changes needed.
+
+**2. Corrected two stale claims in the prior handoff.** Both were listed as outstanding work
+but were already done:
+   - *`KeyError: 'region'`* — the previous diagnosis was that the backend never defined or
+     populated `region`. That is wrong. `Article.region` exists in `models.py`
+     (`default="international"`, indexed), `region: str` is declared on `ArticleResponse` in
+     `main.py`, it's populated when building `ArticleSearchResult`, filtered
+     case-insensitively in `_vector_search`, and consumed by `app.py`'s `render_sources`.
+     Nothing to patch.
+   - *SSE streaming* — listed as "deferred", but already implemented (see above).
+
+**3. Fixed: WhatsApp template sends would have failed 100% of the time.**
+   - *File:* `whatsapp_client.py`. *Added:* `import re`, module constant `_WHITESPACE_RUN`,
+     and function `_sanitize_param(value)`. *Changed:* `send_template_message` now builds body
+     parameters as `_sanitize_param(p)` instead of the raw value.
+   - *Why:* WhatsApp rejects template body parameters containing newlines, tabs, or 4+
+     consecutive spaces (error 132000, *"Parameter format does not match format in the created
+     template"*), and rejects empty parameters. `whatsapp_bot.py` passes `post.social_summary`,
+     which `generate_posts.py` explicitly prompts Gemini to produce as "a punchy 2-4 line
+     summary" — i.e. it contains newlines — and which is an empty string when a story wasn't
+     corroborated. Both failure modes were live.
+   - `_sanitize_param` collapses all whitespace runs to single spaces and substitutes
+     `"(no summary)"` when the result is blank.
+
+**4. Fixed: `rag_chat.py` was never migrated off the retired models.**
+   - *File:* `rag_chat.py`, function `generate_rag_response`. *Was:* a local
+     `candidate_models = ["gemini-flash-latest", "gemini-2.0-flash", "gemini-2.0-flash-lite"]`.
+     *Now:* `candidate_models = [*PRIMARY_MODELS, LATEST_FLASH_ALIAS]`.
+   - *Why it hid:* the loop's exception handler does `continue` on any error containing "404",
+     so the retirement was swallowed silently and execution always fell through to the final
+     `"All candidate models exceeded rate limits"` message — pointing a debugger at quota when
+     the real cause was deprecation.
+
+**5. Deduplicated the model list into a new shared module.**
+   - *Created:* `llm_models.py`, exporting `PRIMARY_MODELS`, `CHEAP_MODEL`,
+     `LATEST_FLASH_ALIAS`, and `list_available_models(client)`.
+   - *Changed:* `main.py` now imports `PRIMARY_MODELS, list_available_models` from it; its
+     local `PRIMARY_MODELS` constant and its private `_list_available_models` function were
+     deleted, and both call sites (the `/synthesize` slow path and the `/synthesize/stream`
+     discovery retry) updated to the imported name. `generate_posts.py` imports
+     `PRIMARY_MODELS` and its local copy was deleted. `backfill_category.py` now sets
+     `GEMINI_MODEL = CHEAP_MODEL` instead of a hardcoded `"gemini-3.5-flash-lite"`.
+     `rag_chat.py` imports `PRIMARY_MODELS, LATEST_FLASH_ALIAS`.
+   - *Why:* the list was copy-pasted into four files. Three were updated during the model
+     migration and `rag_chat.py` was missed — item 4 above is the direct consequence.
+
+**6. Fixed: `ingest.py` and `search.py` were still using the deleted 384-dim embedder.**
+   - *Files:* `ingest.py`, `search.py`, and the query side of `rag_chat.py`.
+   - *Was:* all three built query/document vectors with
+     `SentenceTransformer("all-MiniLM-L6-v2")` (384-dim) and compared them against the
+     `vector(768)` column. **`ingest.py` is the pipeline's entry point, so every new article
+     insert would have failed** on a pgvector dimension mismatch; `search.py` could not run at
+     all.
+   - *Now:* all three call `embeddings.get_embedding` — `task_type="RETRIEVAL_DOCUMENT"` in
+     `ingest.py` (matching exactly what `migrate_switch_to_gemini_embeddings.py` used, so new
+     rows land in the same vector space as re-embedded old ones) and
+     `task_type="RETRIEVAL_QUERY"` in `search.py` and `rag_chat.py`.
+   - *Side effects:* no project code imports `sentence_transformers` any more, which completes
+     the original point of the embedding migration (dropping `torch`). Also,
+     `sentence-transformers` was never listed in `requirements.txt`, so all three scripts
+     would have failed on a fresh install regardless of the dimension issue.
+
+**7. Fixed: `ingest.py` never set `region`, so the Nepal filter would silently rot.**
+   - *File:* `ingest.py`. *Changed:* every entry in `RSS_FEEDS` gained a `"region"` key
+     (`"nepal"` for OnlineKhabar English, The Kathmandu Post, The Himalayan Times;
+     `"international"` for BBC News, TechCrunch, The Verge, Ars Technica).
+     `run_ingestion` reads `feed_region = feed_info["region"]` and passes `region=feed_region`
+     when constructing the `Article`.
+   - *Why:* `Article.region` defaults to `"international"`, and `ingest.py` never set the field,
+     so every newly ingested Nepali-source article would have been filed as international and
+     disappeared from the "Nepal" filter in `app.py`. Verified against the live DB: the current
+     240 rows are correctly split 180 `nepal` / 60 `international`, meaning they were populated
+     by something outside this script. So this was not a visible error — it was gradual,
+     silent data-quality decay affecting only new ingests.
+   - Values are lowercase to match what's already stored (`main.py` filters case-insensitively
+     either way).
+
+**8. Documentation.** Created `PROJECT_BRIEFING.md` (now superseded by this file) and this
+`CLAUDE.md`. Also created `RESUME.md` — a short, self-contained briefing to paste into an
+assistant that has no access to the repo (e.g. Claude Desktop without a filesystem connector).
+It duplicates a small amount of context from this file by design: it has to stand alone. If
+the blocker below is resolved or the hard rules change, update `RESUME.md` too.
+
+### Verification performed this session (earlier)
+- `python -m py_compile` passes on every touched file.
+- `import llm_models`, `import ingest`, `import search` all succeed.
+- Live DB query confirmed the region distribution quoted above (240 rows).
+
+### Session 2026-08-06 continuation — Telegram + end-to-end pipeline test
+
+**9. Switched approval channel from WhatsApp to Telegram (deferred WhatsApp).**
+   - WhatsApp requires a Meta-approved template, a public webhook URL, and has
+     a complex setup that isn't worth tackling until the project is proven useful.
+   - `telegram_bot.py` was already in the repo (the earlier approval channel) and uses
+     polling — no public URL or ngrok needed. Switched to it as the active channel.
+   - CLAUDE.md What's Next and Key Decisions updated accordingly; WhatsApp items moved
+     to a "Deferred" entry.
+
+**10. Fixed: `telegram_bot.py` crashed on startup — missing `job-queue` extra.**
+   - *Error:* `AttributeError: 'NoneType' object has no attribute 'run_repeating'` because
+     `python-telegram-bot` was installed without `APScheduler`.
+   - *Fix:* `pip install "python-telegram-bot[job-queue]==22.8"`. `requirements.txt` updated
+     to pin `python-telegram-bot[job-queue]==22.8`.
+
+**11. Telegram bot credentials set up and tested.**
+   - `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` added to `.env`.
+   - Direct send test confirmed message delivery. All 7 previously-pending posts sent
+     to Telegram manually (bot wasn't running when they were created). Bot then started
+     and Approve/Reject button taps confirmed `Post.status` flips in the DB.
+
+**12. Fixed: Windows cp1252 encoding crash in `ingest.py` and `generate_posts.py`.**
+   - *Error:* `UnicodeEncodeError: 'charmap' codec can't encode character` — Windows
+     console defaults to cp1252, which can't encode emoji (📦, 📡, ✅, ❌) or non-ASCII
+     article titles printed to stdout.
+   - *Fix:* added `import sys` + `sys.stdout.reconfigure(encoding='utf-8')` near the top
+     of both files (after `load_dotenv()`).
+
+**13. Full end-to-end pipeline verified live.**
+   - `ingest.py` ran successfully: 122 new articles added, region split confirmed correct
+     (240 nepal / 122 international — new Nepali-source rows tagged `"nepal"` as expected).
+   - `generate_posts.py` ran against 340 unclustered articles, formed 174 clusters, 3 passed
+     Gemini's corroboration check → 3 new `Post` rows created (all nepali/nepal).
+   - Telegram bot delivered all 3 posts; 2 approved, 1 rejected via button taps.
+     `Post.status` flipped correctly in DB for all 3.
+
+### Verification performed (continuation)
+- `ingest.py` live run: 122 rows inserted, region distribution verified in DB.
+- `generate_posts.py` live run: 3 posts created, Gemini model used logged per post.
+- Telegram approve/reject: DB status confirmed flipped for posts 8, 9, 10.
+
+### Session 2026-08-07 (Claude Code)
+
+**14. Fixed: nullable region/category crash in `app.py` `render_sources`.**
+   - *File:* `app.py`, function `render_sources`. *Was:* `article['region'].upper()` and
+     `article['category'].title()` — both crash with `AttributeError` if either field is `None`.
+   - *Now:* `(article['region'] or 'unknown').upper()` and `(article['category'] or 'uncategorised').title()`.
+   - *Why:* `Post.region` and `Post.category` are nullable columns in the DB schema. All 362 current
+     articles happen to have values, but future ingests via feeds that fail classification could
+     produce nulls. Defensive fallback costs nothing.
+
+**15. Consolidated ingestion: `ingest_rss.py` is now the canonical script.**
+   - *File changed:* `ingest_rss.py` — merged the best of both scripts:
+     `ingest.py` contributed `clean_html()` (BeautifulSoup strip before embedding) and the
+     4 international feeds (BBC, TechCrunch, The Verge, Ars Technica);
+     `ingest_rss.py` contributed auto-classification of `region` + `category`, `image_url`
+     extraction, `--dry-run` mode, and bozo feed detection.
+   - *Old `ingest.py` is superseded* but kept in the repo (it still runs correctly; removing
+     it is a separate decision).
+   - `run_pipeline.bat` updated to call `ingest_rss.py`.
+   - Dry-run verified: all11 feeds parsed correctly; The Kathmandu Post feed returned a
+     bozo error (text/html media type — now visible instead of silent).
+   - UTF-8 stdout fix (`sys.stdout.reconfigure(encoding="utf-8")`) applied at startup.
+
+**16. Optional items completed: nullable region tag + requirements.txt audit.**
+   - `telegram_bot.py` `format_post_message` now uses `post.region or "unknown"` and
+     `post.category or "uncategorised"` so approval messages never render `"English / None / politics"`.
+   - `requirements.txt` pinned 7 missing packages: `beautifulsoup4==4.15.0`,
+     `google-genai==2.16.0`, `numpy==2.5.1`, `pgvector==0.5.0`, `slowapi==0.1.10`,
+     `SQLAlchemy==2.0.51`, `streamlit==1.60.0`.
+
+**17. Scheduler created: `run_pipeline.bat`.**
+   - Calls `ingest_rss.py` then `generate_posts.py` with timestamped logging and exit-code
+     checking. Designed to be wired into Windows Task Scheduler. The Telegram bot runs
+     separately and picks up new pending posts on its30-second poll.
+
+**18. FastAPI + `/synthesize` verified live.**
+   - `main.py` imports clean, server starts on port 8001 without errors.
+   - `/synthesize` with `top_k=3` on "What is happening in Nepal politics?" returned 3 sources
+     (distances 0.29–0.30), a coherent synthesised answer, and `model_used: gemini-3.5-flash-lite`.
+   - Prior "sources: 0" observation was a stale server (uvicorn had failed to bind to the
+     already-occupied port 8000; the request hit an old instance). Not a code bug.
+
+### Verification performed (2026-08-07)
+- `py_compile` passes on `ingest_rss.py`, `app.py`, `telegram_bot.py`.
+- `ingest_rss.py --dry-run` ran cleanly against all 11 feeds.
+- Actual cosine distances confirmed (0.29–0.31) for a Nepal politics query — well under the 0.55 threshold.
+- `/synthesize` live call returned populated `sources_used` with correct data.
+
+**19. Built Facebook + Instagram publisher (`publisher.py`).**
+   - *Created:* `publisher.py`. Publishes approved `Post` rows to Facebook and Instagram
+     via the Graph API (`v20.0`). Skips posts with no `social_summary`. Instagram posts are
+     left pending (not failed) when `image_url` is absent — IG feed posts require an image;
+     this allows a future retry once one is attached.
+   - Facebook: `POST /{page-id}/photos` (with image) or `/{page-id}/feed` (text-only).
+   - Instagram: two-step — create container → `media_publish`. Caption truncated to 2,200 chars.
+   - On real API error, `PlatformPost.status = "failed"` (not retried automatically).
+   - `Post.status` flips to `"published"` once all FB+IG rows are non-pending (see Key Decisions
+     for why website/threads/tiktok are excluded from this check).
+   - `--dry-run` mode prints what would be posted without writing anything.
+   - *Updated:* `run_pipeline.bat` now calls `publisher.py` after `generate_posts.py`.
+   - *Updated:* `.env` — added the three required vars (filled in after Meta credential setup).
+
+**20. Fixed two bugs in `publisher.py` found during live test.**
+   - *Bug 1 — No-image IG posts incorrectly marked `failed`.*
+     `post_to_instagram` returned `(False, ...)` for the "no image" case, causing the caller
+     to set `PlatformPost.status = "failed"`. A missing image is a skip (retry-able), not an
+     API error. Fixed: return `(None, ...)` for the skip case; caller now leaves status as
+     `"pending"` when `success is None`. Three already-failed rows manually reset to `"pending"`.
+   - *Bug 2 — Posts never flipped to `"published"`.*
+     The "all done" check iterated over all `platform_posts` (including website/threads/tiktok,
+     which are unimplemented and always `"pending"`). The check would never pass. Fixed: scope
+     to only `{"facebook", "instagram"}` rows, and sweep ALL `approved` posts at the end of
+     each run (not just those touched in the current run, so posts published in a prior run
+     also get flipped).
+
+**21. Meta credentials configured and publisher live-tested.**
+   - `FACEBOOK_PAGE_ID`, `FACEBOOK_PAGE_ACCESS_TOKEN`, `INSTAGRAM_BUSINESS_ACCOUNT_ID` added
+     to `.env` (Fact Line NP page, `factlinenp` IG business account).
+   - Facebook App `FactLineNP Publisher` (`961662956934562`) created in Meta for Developers.
+   - Token obtained after resolving a Page Admin binding issue: the active Facebook profile
+     lacked Admin rights on the Fact Line NP Page; resolved by assigning Admin via the
+     original creator account.
+   - Live run result:
+     - 6 Facebook posts published (3 text-only, 3 with image)
+     - 3 Instagram posts published (those with `image_url`)
+     - 3 IG rows left `"pending"` (posts 1, 4, 5 have no `image_url`)
+     - Posts 7, 8, 9 flipped to `Post.status = "published"`
+     - Posts 1, 4, 5 remain `"approved"` (FB published, IG pending — awaiting image)
+
+### Verification performed (2026-08-07 continued)
+- `py_compile publisher.py` passes (before and after bug fixes).
+- Live publish run: 6 FB + 3 IG posts confirmed live on Fact Line NP.
+- DB verified: 3 posts `published`, 3 posts `approved` (FB done, IG pending), 4 `rejected`.
+
+**22. Replaced daily batch with continuous pipeline watcher (`watch_pipeline.py`).**
+   - *Motivation:* daily schedule means new articles sit unprocessed for up to 24 hours.
+     With a10-minute poll, new articles are detected and processed as they appear.
+   - *Refactored `ingest_rss.py`:* extracted `main()` body into `run_ingestion(dry_run=False) -> int`.
+     Returns the count of newly committed articles. `main()` now just parses args and delegates.
+   - *Refactored `generate_posts.py`:* same pattern — `run_pipeline(dry_run=False) -> int`.
+     Returns posts created. `main()` delegates. Both CLIs (`python ingest_rss.py`,
+     `python generate_posts.py`) still work identically.
+   - *Created `watch_pipeline.py`:* the continuous loop.
+     - Polls RSS every `--interval` seconds (default 600 = 10 min).
+     - Step 1: `run_ingestion()`. Step 2: `run_pipeline()` **only if new articles arrived**.
+       Step 3: `run_publisher()` always (flushes any newly-approved posts to FB/IG).
+     - `--once` flag runs a single cycle and exits (equivalent to the old `run_pipeline.bat`).
+     - Catches exceptions per-step and logs them; watcher keeps running on partial failures.
+   - *Auto-start on login:* `news-engine-watcher.bat` written to the Windows Startup folder
+     (`AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup/`). No admin required.
+     On next login the watcher starts automatically alongside the OS.
+   - *Also created `setup_scheduler.ps1`*: alternative Task Scheduler setup (requires running
+     as admin). Creates `news-engine-watcher` task at logon with auto-restart on failure.
+
+**23. Built website publisher/viewer — `/posts` API + Streamlit tab.**
+   - *Added to `main.py`:* `PostResponse` Pydantic model; `GET /posts` (filterable by
+     status/region/category, paginated, newest first); `GET /posts/{post_id}` (single post).
+   - *Added to `app.py`:* third tab "📰 Published Posts" — filters by region/category,
+     loads posts via `/posts`, renders each in an expander with image, social summary,
+     and full article body.
+   - *Updated `publisher.py`:* when `Post.status` flips to `"published"`, the
+     `platform="website"` `PlatformPost` row is also marked `published` with a timestamp.
+     The `/posts` endpoint is the website; it is now a real publishing destination.
+   - *Verified live:* `GET /posts` returned the 3 published posts correctly (Nepali +
+     English, images intact). Streamlit "Published Posts" tab confirmed working.
+
+**24. Streamlit UI fully verified.**
+   - All three tabs tested live: News Search & Synthesis (streaming SSE working, sources
+     appearing with cosine distances), Published Posts (3 posts loaded with images),
+     Ingested Database (raw article table).
+   - API running on port 8000 with `--reload` (auto-reloads on file changes).
+
+### Verification performed (2026-08-07 final)
+- `py_compile ingest_rss.py generate_posts.py watch_pipeline.py` all pass.
+- `py_compile main.py app.py publisher.py` all pass.
+- `GET /posts` live: 3 published posts returned correctly.
+- Streamlit UI: all 3 tabs working end-to-end.
+
+### Session 2026-08-08 (Claude Code)
+
+**26. Built full Fact Line NP news website (complete redesign).**
+   - *Design system:* `static/style.css` (~400 lines) — CSS custom properties for Fact
+     Line red (`#D4001A`), deep navy (`#0A1628`), full type scale (Roboto Condensed
+     headlines + Noto Sans body + Noto Sans Devanagari for Nepali), responsive grid,
+     card components, hero layout, sidebar, article page, footer.
+   - *Templates* (Jinja2, all in `templates/`):
+     - `base.html` — header (topbar + logo + desktop/mobile nav), breaking ticker,
+       footer with4 columns, live date JS, hamburger toggle.
+     - `index.html` — hero grid (lead + 4 secondary), latest news feed, per-category
+       sections, opinion strip, sidebar with most-read + categories.
+     - `post.html` — article page: category badge, title, byline, reading time, hero
+       image, lede callout, body paragraphs, FB/TW/WA/copy share bar, tags, related grid.
+     - `category.html` — category archive with card grid.
+     - `latest.html` — latest news list (also used for /popular).
+     - `search.html` — search form + results grid.
+     - `about.html` — about/editorial standards page.
+     - `404.html` — custom 404 page.
+   - *Routes added to `main.py`*: `/web`, `/web/post/{id}`, `/web/category/{cat}`,
+     `/web/latest`, `/web/popular`, `/web/search`, `/web/about`, `/web/contact`,
+     `/web/privacy`, `/web/terms`, `/web/corrections`, `/web/advertise`.
+   - *Security*: category param sanitised (strip non-alphanumeric), search input
+     validated (min 2 chars, max 200 chars), 404/500 exception handlers hide stack
+     traces and serve `404.html` for `/web` paths + JSON for API paths.
+   - *Helpers*: `_p()` (Post→dict), `_all_categories()`, `_most_read()`.
+   - *Verified*: `py_compile main.py` passes; all 13 `/web` routes confirmed in
+     `app.routes`.
+
+### Verification performed (2026-08-08)
+- `py_compile main.py` passes.
+- Import test: all 13 `/web` routes registered correctly.
+   - `news-engine-watcher.bat` (Windows Startup folder) updated to also launch
+     `python telegram_bot.py` alongside `python watch_pipeline.py`. Both start
+     automatically on next login without admin.
+
+**26. Built public-facing news website (`/web`).**
+   - *Files created:* `static/style.css`, `templates/base.html`,
+     `templates/index.html`, `templates/post.html`.
+   - *Routes added to `main.py`:*
+     - `GET /web` — news homepage: published posts as responsive cards,
+       filterable by region and category.
+     - `GET /web/post/{id}` — article page: hero image, social summary callout,
+       full article body rendered as paragraphs, metadata badges.
+   - *App changes:* `StaticFiles` mounted at `/static`; `Jinja2Templates`
+     initialized at module level. Both `Jinja2` and `aiofiles` added to
+     `requirements.txt`.
+   - *Route registration confirmed* via `from main import app` import test —
+     both `/web` routes appear in `app.routes`.
+   - *Status:* code complete and verified. Requires `uvicorn main:app --reload`
+     to be started manually in a terminal (background process management via the
+     bash tool was unreliable for long-lived servers).
+
+### Verification performed (2026-08-08)
+- `py_compile main.py` passes after all website changes.
+- `from main import app` confirms `/web` and `/web/post/{post_id}` are
+  registered as APIRoute objects.
+- `GET /posts` JSON endpoint confirmed working throughout session.
+
+---
+
+## Small Changes Log
+- `whatsapp_client.py` — added `import re`.
+- `rag_chat.py` — removed the three `os.environ[...]` HuggingFace warning-suppression lines
+  (`HF_HUB_DISABLE_SYMLINKS_WARNING`, `HF_HUB_VERBOSITY`, `TOKENIZERS_PARALLELISM`); no longer
+  needed once `sentence_transformers` was dropped.
+- `rag_chat.py` — moved `load_dotenv()` above the imports that read env vars at import time.
+- `ingest.py` — removed the same three HuggingFace `os.environ` lines, and removed
+  `import os` entirely (it had no other use in the file).
+- `ingest.py` — removed `from sentence_transformers import SentenceTransformer` and the
+  module-level `embedding_model = SentenceTransformer(...)` initialization.
+- `search.py` — added `from dotenv import load_dotenv` + `load_dotenv()`; the file previously
+  had none and now needs it, since `embeddings.py` reads `GEMINI_API_KEY` at import time.
+- `backfill_category.py` — `GEMINI_MODEL` is now assigned from `CHEAP_MODEL` rather than a
+  string literal; trailing comment reworded.
+- `embeddings.py` — docstring only: the list of consumers said `ingest_rss.py`, a file that
+  doesn't exist. Corrected to `main.py`, `search.py`, `rag_chat.py`, `ingest.py`,
+  `migrate_switch_to_gemini_embeddings.py`.
+- `main.py` — deleted the now-redundant `# --- Model selection ---` comment block, replaced
+  with a two-line pointer to `llm_models.py`.
+- `publisher.py` — created: FB/IG Graph API publisher.
+- `publisher.py` — bug fix: `post_to_instagram` returns `None` (not `False`) for no-image skip;
+  caller now leaves `PlatformPost.status` as `"pending"` instead of setting `"failed"`.
+- `publisher.py` — bug fix: "all done" check now scopes to `{"facebook", "instagram"}` only and
+  sweeps all `approved` posts (not just those touched in the current run).
+- `run_pipeline.bat` — added `publisher.py` step after `generate_posts.py`.
+- `watch_pipeline.py` — created: continuous RSS watcher, polls every 10 min, runs full pipeline.
+- `ingest_rss.py` — refactored `main()` into callable `run_ingestion(dry_run) -> int`.
+- `generate_posts.py` — refactored `main()` into callable `run_pipeline(dry_run) -> int`.
+- `setup_scheduler.ps1` — created: PowerShell script to register at-logon Task Scheduler job (needs admin).
+- `news-engine-watcher.bat` — written to Windows Startup folder for auto-start at login (no admin).
+- `main.py` — added `PostResponse` model; `GET /posts`; `GET /posts/{post_id}`.
+- `app.py` — added "📰 Published Posts" third tab.
+- `publisher.py` — marks `platform="website"` PlatformPost as published when Post goes live.
+- `news-engine-watcher.bat` (Startup folder) — updated to also launch `telegram_bot.py`.
+- `main.py` — added `StaticFiles` mount at `/static`, `Jinja2Templates` init, `GET /web`, `GET /web/post/{id}`.
+- `static/style.css` — created: responsive news site styles.
+- `templates/base.html`, `templates/index.html`, `templates/post.html` — created: full HTML website.
+- `requirements.txt` — added `jinja2==3.1.6`, `aiofiles==24.1.0`.
+- `.env` — added commented placeholder lines for `FACEBOOK_PAGE_ID`, `FACEBOOK_PAGE_ACCESS_TOKEN`,
+  `INSTAGRAM_BUSINESS_ACCOUNT_ID`.
+- `app.py` — `render_sources`: `article['region'].upper()` → `(article['region'] or 'unknown').upper()`;
+  same for `category`. Defensive null guard.
+- `ingest_rss.py` — complete rewrite (canonical merge of `ingest.py` + old `ingest_rss.py`):
+  added `clean_html()`, international feeds, UTF-8 fix, removed dead imports.
+- `telegram_bot.py` — `format_post_message`: region/category fall back to `"unknown"` / `"uncategorised"`.
+- `requirements.txt` — added `python-telegram-bot[job-queue]==22.8` and pinned 7 previously-unpinned packages.
+- `run_pipeline.bat` — created: scheduled runner for `ingest_rss.py` + `generate_posts.py`.
+
+---
+
+## What's Next
+*(priority order — items 1–6 completed 2026-08-06/07)*
+
+1. ~~Telegram bot setup~~ ✅ Done
+2. ~~End-to-end approval test~~ ✅ Done
+3. ~~Run `ingest.py` and verify new rows~~ ✅ Done
+4. ~~Optional: nullable region/category in bot messages~~ ✅ Done
+5. ~~Optional: audit `requirements.txt`~~ ✅ Done
+6. ~~FB/IG publisher — Meta credentials + live test~~ ✅ Done
+7. **Posts 1, 4, 5: IG still pending (no `image_url`).** Attach an image via SQL then run `python publisher.py`.
+8. ~~Build website publisher / viewer~~ ✅ Done — `GET /web` + article pages live at `localhost:8000/web`
+9. **Token refresh reminder** set for 2026-10-06 (durable cron job, fires in Claude Code).
+10. **Deploy to public server** — the biggest remaining step. Code is production-ready.
+    Recommended: Railway or Render (free tier, ~30 min setup). Steps:
+    - Push repo to GitHub (exclude `.env` — add to `.gitignore`)
+    - Create a Railway/Render project, set environment variables from `.env`
+    - Set start command: `uvicorn main:app --host 0.0.0.0 --port $PORT`
+    - Point a custom domain (e.g. factlinenp.com) at the deployed URL
+    - For the watcher (`watch_pipeline.py`) + Telegram bot: run as separate Railway
+      services or on a cheap VPS alongside the API.
+11. **Deferred — WhatsApp approval.** Code is in the repo; revisit once deployed.
+
+---
+
+## Key Decisions
+
+- **Model IDs live in `llm_models.py` and nowhere else.** Google retires Gemini IDs on a
+  rolling basis; per-file copies already drifted once and produced a silent failure.
+- **Do not adopt `gemini-2.5-flash`.** Scheduled for retirement 2026-10-16 and already failing
+  early for some callers. Migrating to it would mean redoing this work within weeks.
+  *(Provenance: retirement dates come from an earlier session's research; not independently
+  re-verified on 2026-08-06.)*
+- **Embedding config stays in `embeddings.py`, separate from `llm_models.py`.** These have
+  very different change costs: swapping a generation model is free, swapping the embedding
+  model invalidates the entire stored corpus and requires a full re-embed.
+- **One embedding function, always.** Mixing embedding models is the failure this codebase has
+  already hit twice. `get_embedding`'s `task_type` matters: `RETRIEVAL_DOCUMENT` for stored
+  text, `RETRIEVAL_QUERY` for user queries — Gemini optimizes the two sides differently, and
+  mismatching them degrades ranking *without* raising an error.
+- **`LATEST_FLASH_ALIAS` (`gemini-flash-latest`) is a last-resort fallback, never a primary.**
+  It can shift under you between runs, which makes behaviour non-reproducible.
+- **Parameter sanitization belongs in `whatsapp_client.py`, not the callers.** It's a
+  constraint of the WhatsApp API itself, so every caller needs it.
+- **Region values are lowercase** (`"nepal"`, `"international"`) to match existing stored data.
+- **WhatsApp webhook route is `/webhooks/whatsapp`** (plural) and signature verification
+  **fails closed**. Do not "simplify" either — both have been broken before.
+- **FastAPI routes are async, SQLAlchemy is sync.** Always wrap DB and embedding calls in
+  `run_in_threadpool`. Never call `db.execute(...)` directly inside an async route.
+- **`PROJECT_BRIEFING.md` was not deleted**, only reduced to a pointer — in case it's
+  referenced externally.
+- **`publisher.py` "all done" check scopes to `{"facebook", "instagram"}` only.**
+  `generate_posts.py` creates `PlatformPost` rows for website/threads/tiktok too, but those
+  platforms are unimplemented. Including them in the "is this post fully published?" check
+  would mean `Post.status` never flips to `"published"`. Only the platforms the publisher
+  actually handles count toward completion.
+- **Instagram skip ≠ failure.** `post_to_instagram` returns `None` (not `False`) when
+  `image_url` is absent. The caller leaves `PlatformPost.status = "pending"` so the post
+  retries automatically once an image is attached. A real API error returns `False` and
+  sets status to `"failed"`, which requires manual intervention to retry.
+
+---
+
+## Open Questions / Blockers
+
+1. **Is `GEMINI_API_KEY` on a billing-enabled project?** Flagged risk: free-tier rate limits
+   will reproduce the original 429 errors even with valid model names. Relevant to both
+   synthesis and any bulk `ingest.py` run.
+2. **Who populated `region` for the existing 240 rows?** Not `ingest.py` (confirmed by
+   inspection) and there is no `backfill_region.py`. Likely manual SQL or a deleted script.
+   Harmless now that ingestion sets it explicitly, but worth knowing if the values look wrong.
+
+*(WhatsApp template name, language code, and Meta approval status were blockers for the
+WhatsApp flow — deferred along with that feature. See What's Next #6.)*
+
+---
+
+## Working Conventions
+- Activate the venv first: `venv\Scripts\activate`
+- Syntax-check with: `venv/Scripts/python.exe -m py_compile <files>`
+- Start the API: `uvicorn main:app --reload`
+- Start the UI: `streamlit run app.py`

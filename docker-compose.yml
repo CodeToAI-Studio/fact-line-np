@@ -1,0 +1,16 @@
+services: 
+  postgres: 
+    image: pgvector/pgvector:pg17 
+    container_name: news_postgres 
+    restart: always 
+    environment: 
+      POSTGRES_USER: news_user 
+      POSTGRES_PASSWORD: news_password 
+      POSTGRES_DB: news_db 
+    ports: 
+      - "5432:5432" 
+    volumes: 
+      - postgres_data:/var/lib/postgresql/data 
+ 
+volumes: 
+  postgres_data:

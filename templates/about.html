@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}About Us — Fact Line NP{% endblock %}
+{% block content %}
+<div class="page-band"><div class="container"><h1>About Fact Line NP</h1></div></div>
+<div class="page-wrap"><div class="container">
+  <div class="two-col">
+    <div style="background:var(--bg-card);border-radius:var(--radius-lg);padding:32px;box-shadow:var(--shadow-sm)">
+      <h2 style="font-family:var(--font-head);font-size:1.4rem;color:var(--fl-navy);margin-bottom:16px">Our Mission</h2>
+      <p style="margin-bottom:16px;line-height:1.8">Fact Line NP is a Nepali digital news platform committed to verified, timely, and responsible journalism. We cover Nepal and international news with clarity and independence.</p>
+      <p style="margin-bottom:24px;line-height:1.8">Every story on Fact Line NP is verified by at least two independent sources before publication. We believe accurate information is the foundation of an informed society.</p>
+      <h2 style="font-family:var(--font-head);font-size:1.4rem;color:var(--fl-navy);margin-bottom:16px">Editorial Standards</h2>
+      <p style="margin-bottom:16px;line-height:1.8">We clearly label Opinion, Sponsored, Video, Interview, and Explainer content. Corrections are published promptly when errors are identified. We separate news reporting from editorial commentary.</p>
+      <h2 style="font-family:var(--font-head);font-size:1.4rem;color:var(--fl-navy);margin-bottom:16px;margin-top:24px">Contact</h2>
+      <p style="line-height:1.8">For news tips, corrections, or general enquiries: <a href="/web/contact" style="color:var(--fl-red);font-weight:600">contact us here</a>.</p>
+    </div>
+    <aside class="sidebar">
+      <div class="sidebar-block">
+        <div class="sidebar-hd">Our Coverage</div>
+        {% for cat in all_categories %}
+        <a href="/web/category/{{ cat }}" style="display:block;padding:7px 0;font-size:.82rem;border-bottom:1px solid var(--border);color:var(--text-2)">{{ cat | title }}</a>
+        {% endfor %}
+      </div>
+    </aside>
+  </div>
+</div></div>
+{% endblock %}

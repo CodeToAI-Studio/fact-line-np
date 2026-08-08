@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+{% block title %}Fact Line NP — Nepal ko Vishwasaniya Samachar{% endblock %}
+{% block content %}
+<div class="page-wrap">
+<div class="container">
+
+  {# HERO GRID #}
+  {% if hero_lead or hero_subs %}
+  <div class="hero-grid">
+    {% if hero_lead %}
+    <a href="/web/post/{{ hero_lead.id }}" class="hero-lead">
+      {% if hero_lead.image_url %}<img src="{{ hero_lead.image_url }}" alt="{{ hero_lead.social_summary[:60] }}" loading="eager"/>
+      {% else %}<div class="img-placeholder" style="min-height:360px">📰</div>{% endif %}
+      <div class="hero-overlay">
+        <span class="cat-badge {{ hero_lead.category or '' }}">{{ (hero_lead.category or 'news') | title }}</span>
+        <div class="hero-title">{{ hero_lead.social_summary[:120] }}</div>
+        <div class="hero-summary nepali">{{ hero_lead.social_summary[120:200] if hero_lead.social_summary|length > 120 }}</div>
+        <div class="meta-row" style="margin-top:8px"><span class="meta-time" style="color:rgba(255,255,255,.6)">{{ hero_lead.created_at[:10] if hero_lead.created_at }}</span></div>
+      </div>
+    </a>
+    {% endif %}
+    {% for post in hero_subs %}
+    <a href="/web/post/{{ post.id }}" class="hero-sub">
+      {% if post.image_url %}<img src="{{ post.image_url }}" alt="{{ post.social_summary[:40] }}" loading="lazy"/>
+      {% else %}<div class="img-placeholder" style="width:110px;min-width:110px;height:88px">📰</div>{% endif %}
+      <div class="hero-sub-body">
+        <span class="cat-badge {{ post.category or '' }}" style="font-size:.6rem">{{ (post.category or 'news') | title }}</span>
+        <div class="hero-sub-title">{{ post.social_summary[:100] }}</div>
+        <div class="meta-time">{{ post.created_at[:10] if post.created_at }}</div>
+      </div>
+    </a>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {# MAIN + SIDEBAR #}
+  <div class="two-col">
+    <div>
+      {# LATEST NEWS #}
+      <div class="section-block">
+        <div class="section-hd">
+          <h2>Latest News</h2>
+          <a href="/web/latest" class="see-all">View all &rarr;</a>
+        </div>
+        {% for post in latest_posts %}
+        <div class="latest-img-item">
+          <a href="/web/post/{{ post.id }}">
+            {% if post.image_url %}<img src="{{ post.image_url }}" alt="" loading="lazy"/>
+            {% else %}<div class="img-placeholder" style="width:72px;min-width:72px;height:56px;border-radius:2px">📰</div>{% endif %}
+          </a>
+          <div>
+            <span class="cat-badge {{ post.category or '' }}" style="font-size:.6rem">{{ (post.category or 'news') | title }}</span>
+            <a href="/web/post/{{ post.id }}" class="latest-title" style="display:block;margin-top:4px">{{ post.social_summary[:110] }}</a>
+            <div class="meta-time">{{ post.created_at[:10] if post.created_at }}</div>
+          </div>
+        </div>
+        {% else %}<p class="text-muted" style="padding:16px 0">No posts yet.</p>
+        {% endfor %}
+      </div>
+    </div>
+
+      {# CATEGORY SECTIONS #}
+      {% for section in category_sections %}
+      <div class="section-block">
+        <div class="section-hd">
+          <h2>{{ section.name | title }}</h2>
+          <a href="/web/category/{{ section.slug }}" class="see-all">View all &rarr;</a>
+        </div>
+        <div class="card-grid">
+          {% for post in section.posts %}
+          <a href="/web/post/{{ post.id }}" class="card">
+            {% if post.image_url %}<img src="{{ post.image_url }}" alt="" loading="lazy"/>
+            {% else %}<div class="img-placeholder" style="height:170px">📰</div>{% endif %}
+            <div class="card-body">
+              <div class="card-title {% if post.language == 'nepali' %}nepali{% endif %}">{{ post.social_summary[:120] }}</div>
+              <div class="meta-row"><span class="meta-time">{{ post.created_at[:10] if post.created_at }}</span></div>
+            </div>
+          </a>
+          {% endfor %}
+        </div>
+      </div>
+      {% endfor %}
+
+      {# OPINION #}
+      {% if opinion_posts %}
+      <div class="section-block">
+        <div class="section-hd"><h2>Opinion &amp; Analysis</h2></div>
+        <div class="opinion-strip">
+          {% for post in opinion_posts %}
+          <a href="/web/post/{{ post.id }}" class="opinion-card">
+            <div class="opinion-label">Opinion</div>
+            <div class="opinion-title {% if post.language == 'nepali' %}nepali{% endif %}">{{ post.social_summary[:100] }}</div>
+            <div class="meta-time" style="margin-top:8px">{{ post.created_at[:10] if post.created_at }}</div>
+          </a>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+    </div>
+
+    {# SIDEBAR #}
+    <aside class="sidebar">
+      <div class="sidebar-block">
+        <div class="sidebar-hd">Most Read</div>
+        {% for post in most_read %}
+        <div class="most-read-item">
+          <div class="mr-num {% if loop.index == 1 %}top{% endif %}">{{ loop.index }}</div>
+          <a href="/web/post/{{ post.id }}" class="mr-title {% if post.language == 'nepali' %}nepali{% endif %}">{{ post.social_summary[:90] }}</a>
+        </div>
+        {% endfor %}
+      </div>
+      <div class="sidebar-block">
+        <div class="sidebar-hd">Categories</div>
+        {% for cat in all_categories %}
+        <a href="/web/category/{{ cat }}" style="display:block;padding:6px 0;font-size:.82rem;border-bottom:1px solid var(--border);color:var(--text-2)">{{ cat | title }}</a>
+        {% endfor %}
+      </div>
+      <div class="ad-block">Advertisement</div>
+    </aside>
+  </div>
+
+</div></div>
+{% endblock %}
