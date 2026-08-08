@@ -7,14 +7,16 @@ telegram_bot.py.
 
 Loop logic:
   1. Poll all RSS feeds (ingest_rss.run_ingestion).
-  2. If new articles were ingested → cluster + verify + draft posts
+  2. If new articles arrived → cluster + verify + draft posts
      (generate_posts.run_pipeline).
   3. Always run the publisher at the end of each cycle to push any
      newly-approved posts to FB + IG (publisher.run_publisher).
-  4. Sleep POLL_INTERVAL seconds, then repeat.
+  4. Run the retention sweep (retention.run_retention) to delete consumed /
+     stale Article rows.
+  5. Sleep POLL_INTERVAL seconds, then repeat.
 
-Steps 2 and 3 are skipped only if step 1 added nothing AND there are no
-pending approved posts (the publisher exits immediately in that case).
+Steps 2 and 3 are skipped only if step 1 added nothing AND there are approved
+pending posts (the publisher exits immediately in that case).
 
 USAGE
 -----
@@ -35,6 +37,7 @@ sys.stdout.reconfigure(encoding="utf-8")
 from ingest_rss import run_ingestion
 from generate_posts import run_pipeline
 from publisher import run_publisher
+from retention import run_retention
 
 DEFAULT_POLL_INTERVAL = 600  # 10 minutes
 
@@ -73,6 +76,13 @@ def run_once():
         run_publisher()
     except Exception as e:
         print(f"[{_timestamp()}] ERROR in publisher: {e}")
+
+    # Step 4 — retention sweep (delete consumed / stale articles)
+    print(f"\n[{_timestamp()}] --- Running retention sweep ---")
+    try:
+        run_retention()
+    except Exception as e:
+        print(f"[{_timestamp()}] ERROR in retention: {e}")
 
     print(f"\n[{_timestamp()}] Pipeline cycle complete.")
 

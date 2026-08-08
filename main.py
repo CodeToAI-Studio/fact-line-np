@@ -928,7 +928,13 @@ async def admin_login(request: Request, db: Session = Depends(get_db)):
     session_id = create_session(db, user)
     log_action(db, {"username": user.username}, "login_success", ip=request.client.host if request.client else None)
     resp = RedirectResponse(url="/admin", status_code=303)
-    resp.set_cookie(SESSION_COOKIE_NAME, session_id, httponly=True, samesite="lax", max_age=86400)
+    # Secure flag only when served over HTTPS (Railway/prod); plain HTTP in
+    # local dev must still work, so it's keyed to the request scheme.
+    resp.set_cookie(
+        SESSION_COOKIE_NAME, session_id,
+        httponly=True, samesite="lax", max_age=86400,
+        secure=request.url.scheme == "https",
+    )
     return resp
 
 @app.post("/admin/logout", include_in_schema=False)
@@ -937,7 +943,7 @@ def admin_logout(request: Request, db: Session = Depends(get_db)):
     if sid:
         delete_session(db, sid)
     resp = RedirectResponse(url="/admin/login", status_code=303)
-    resp.delete_cookie(SESSION_COOKIE_NAME)
+    resp.delete_cookie(SESSION_COOKIE_NAME, secure=request.url.scheme == "https")
     return resp
 
 

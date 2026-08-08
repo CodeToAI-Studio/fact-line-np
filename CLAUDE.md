@@ -509,6 +509,39 @@ the blocker below is resolved or the hard rules change, update `RESUME.md` too.
      `VARCHAR(255)`. `ALTER TABLE ... SET DATA TYPE VARCHAR(255)` applied so a future hash
      format change can't silently hit the width limit.
 
+### Session 2026-08-09 (cont.) — sequenced remaining work
+
+**31. Attached images to approved posts 1, 4, 5 (unblocks their Instagram).**
+   These posts were approved with FB published but IG `pending` because they had no
+   `image_url`. Harvested the open-graph image from each post's source articles (BBC,
+   Kathmandu Post, OnlineKhabar, Nagarik Dainik page) via `requests` + regex, set
+   `image_url` + `image_source_credit` ("Image via {source}"). Verified all 3 URLs return
+   `200 image/jpeg`. IG publish is still blocked only by the expired FB token (deferred per
+   user — do not touch until they say so).
+
+**32. Data retention/cleanup automation implemented (`retention.py`).**
+   The retained/window policy decided at model design was the one entry sitting at 0%.
+   Created `retention.py` with `run_retention(dry_run=False)` that deletes Article rows that
+   are (a) linked to a fully-published post (FB+IG non-pending, mirroring publisher.py's
+   ACTIVE_PLATFORMS scope) or (b) unclustered (post_id NULL) and older than
+   `UNCLUSTERED_RETENTION_DAYS` (default 30, env-tunable). Wired as step 4 of
+   `watch_pipeline.py`'s cycle. First live run deleted 12 consumed articles (8 from post 9,
+   2 each from posts 7 and 8); all posts untouched. A CLI (`python retention.py [--dry-run]`)
+   also works.
+
+**33. Admin hardening follow-ups (Secure cookie).**
+   `admin/login` and `admin/logout` now set/clear the session cookie with
+   `secure=request.url.scheme == "https"` — the flag is on automatically behind HTTPS
+   (Railway/prod) and off for plain-HTTP local dev. Verified: TestClient over `https://`
+   sets `Secure`, over `http://` it does not. The GEMINI API billing-tier check remains a
+   manual verification item (Open Questions), not a code change.
+
+**34. Frontend pre-deployment viewing session set up (user req).**
+   Started a fresh uvicorn on port **8002** (ports 8000/8001 were held by zombie uvicorns)
+   so the user can review every public page + the admin CMS before deploying. Confirmed
+   live: `/`, `/web`, `/web/latest`, `/web/about`, `/web/post/9`, `/web/search?q=nepal`,
+   `/admin/login` all return 200 with real data.
+
 ---
 
 ## Small Changes Log
@@ -570,6 +603,10 @@ the blocker below is resolved or the hard rules change, update `RESUME.md` too.
 - `main.py` — admin credentials are required envs (startup fails loudly if missing); lifespan re-issues admin password when hash doesn't verify; added `@limiter.limit` to `/admin/login` (10/min) + admin POST routes (20–30/min); admin routes pass `db` to session helpers.
 - `.env` — added `ADMIN_USERNAME`/`ADMIN_PASSWORD`/`ADMIN_EMAIL` (random generated password).
 - `requirements.txt` — pinned `fastapi==0.141.1`, `starlette==1.3.1`.
+- `retention.py` — created: `run_retention(dry_run)` deletes consumed/stale Article rows; wired into `watch_pipeline.py` step 4.
+- `watch_pipeline.py` — added step 4 (retention sweep) + updated docstring.
+- `main.py` — admin session cookie `secure=` keyed to HTTPS scheme (login + logout).
+- *(data)* posts 1, 4, 5 — `image_url` + `image_source_credit` set from source-article OG images.
 
 ---
 
@@ -582,7 +619,9 @@ the blocker below is resolved or the hard rules change, update `RESUME.md` too.
 4. ~~Optional: nullable region/category in bot messages~~ ✅ Done
 5. ~~Optional: audit `requirements.txt`~~ ✅ Done
 6. ~~FB/IG publisher — Meta credentials + live test~~ ✅ Done
-7. **Posts 1, 4, 5: IG still pending (no `image_url`).** Attach an image via SQL then run `python publisher.py`.
+7. ~~Attach images to posts 1, 4, 5~~ ✅ Done — OG images harvested + `image_source_credit` set;
+   IG publish now blocked only by the (deferred) FB token.
+8. ~~Data retention/cleanup~~ ✅ Done — `retention.py` + wired into watcher (What's Done #32).
 8. ~~Build website publisher / viewer~~ ✅ Done — `GET /web` + article pages live at `localhost:8000/web`
 9. ~~Build admin CMS~~ ✅ Done — `/admin` login + full CRUD. Log in at `/admin/login`.
    Credentials come from `ADMIN_USERNAME`/`ADMIN_PASSWORD`/`ADMIN_EMAIL` in `.env`
