@@ -97,4 +97,30 @@ watcher cycle.
 > them at Railway's `DATABASE_URL`, they become extra workers. Leaving them to
 > the old DB just keeps the local copy alive — that's fine if you ever want a
 > fallback, but for a single source of truth, re-point everything at Railway
-> after the deploy and stop the local watcher/bot.
+> and stop the local watcher/bot.
+
+## 7. Running the pipeline (watcher + bot) on Railway — always-on workers
+
+To make Fact Line NP **self-running 24/7** (no local PC), add two more
+services from the same repo. Both are long-running loops with **no HTTP
+port**, so they run through the `railway_worker.py` wrapper, which binds the
+Railway-injected `PORT` as a `/` health endpoint returning 200 (so Railway
+never kills them for "missing healthcheck").
+
+| Service | Start command | Env vars (shared) |
+|---|---|---|
+| `watcher` | `python railway_worker.py watch` | `DATABASE_URL` (injected), `GEMINI_API_KEY`, `FACEBOOK_PAGE_ID`, `FACEBOOK_PAGE_ACCESS_TOKEN`, `INSTAGRAM_BUSINESS_ACCOUNT_ID` |
+| `bot` | `python railway_worker.py bot` | `DATABASE_URL`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` |
+
+Add them: **New Service → GitHub repo → `fact-line-np`**, then set the **Start
+Command** to the row above (overrides the web `railway.json` start).
+Railway-created from the repo, they pick up the same build.
+
+**Important — the two sources of truth problem:**
+- These workers write to **whatever `DATABASE_URL` they get**.
+- If you want them to run the **live site's** DB (single source of truth), give
+  them the deploy's Postgres `DATABASE_URL` (share it like the web service).
+- Do **NOT** run them on a different DB from the live site.
+- **Stop the local `watch_pipeline.py` + `telegram_bot.py`** once the cloud
+  ones are live — otherwise Telegram's `getUpdates` would fight (two bots
+  polling the same token = missed/lost messages and double-publishes).
