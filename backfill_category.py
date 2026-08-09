@@ -196,6 +196,7 @@ Title: {title}
 Content: {content[:600]}
 """
     client = get_client()
+    gemini_keys.pace()
     response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
     answer = (response.text or "").strip().lower()
     if answer in GEMINI_CATEGORY_OPTIONS:

@@ -24,6 +24,7 @@ never raises) — callers just log that they switched.
 """
 
 import os
+import time
 
 from google import genai
 
@@ -33,6 +34,35 @@ KEYS = [k.strip() for k in _raw.split(",") if k.strip()]
 
 _index = 0
 _clients = {}  # key -> genai.Client
+
+# Free tier limits requests per MINUTE as well as per day. Measured live:
+# gemini-3.6-flash allows only ~0-7 rapid calls/min before 429, while
+# gemini-3.5-flash-lite allows 15+ . Without pacing, the pipeline's tight
+# loop over many clusters blows the per-minute budget across every key in
+# seconds — even with rotation. A token-bucket per key keeps us under the
+# window.
+RPM_THRESHOLD = int(os.getenv("GEMINI_RPM_PER_KEY", "8"))  # requests allowed per 60s per key
+RPM_WINDOW_SECONDS = 60
+_last_request_times: dict[str, list] = {}  # key -> timestamps of recent requests
+
+
+def pace() -> None:
+    """Block until the current key is allowed to make another request, keeping
+    the per-key request rate under RPM_THRESHOLD / minute. Call immediately
+    before issuing a Gemini request (generation or embedding)."""
+    if not KEYS or RPM_THRESHOLD <= 0:
+        return
+    key = current_key()
+    now = time.monotonic()
+    recent = _last_request_times.get(key, [])
+    recent = [t for t in recent if now - t < RPM_WINDOW_SECONDS]
+    if len(recent) >= RPM_THRESHOLD:
+        sleep_for = RPM_WINDOW_SECONDS - (now - recent[0])
+        if sleep_for > 0:
+            time.sleep(sleep_for)
+        recent = []
+    recent.append(now)
+    _last_request_times[key] = recent
 
 
 def key_count() -> int:
@@ -77,3 +107,14 @@ def is_rate_limit(exc: Exception) -> bool:
     (the only case worth rotating on)."""
     s = str(exc)
     return "RESOURCE_EXHAUSTED" in s or "429" in s
+
+
+def sleep_on_429(exc: Exception) -> None:
+    """Parse the 'Please retry in Ns' hint from a 429 and sleep that long (capped),
+    so we don't immediately hammer the next key with the same burst."""
+    import re
+    s = str(exc)
+    m = re.search(r"retry in ([\d.]+)s", s)
+    if m:
+        wait = min(float(m.group(1)) + 1.0, 30.0)
+        time.sleep(wait)

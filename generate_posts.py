@@ -169,8 +169,14 @@ def call_gemini_for_cluster(cluster):
     client = get_llm_client()
     last_error = None
 
-    for model_name in PRIMARY_MODELS:
+    # On the free tier, gemini-3.5-flash-lite has a much higher per-minute
+    # RPM than gemini-3.6-flash (measured: ~15+ vs ~0-7 rapid calls/min), so
+    # try lite FIRST for drafting. 3.6-flash stays as a quality fallback.
+    candidate_models = ["gemini-3.5-flash-lite", "gemini-3.6-flash"]
+
+    for model_name in candidate_models:
         try:
+            gemini_keys.pace()
             response = client.models.generate_content(model=model_name, contents=prompt)
             text = (response.text or "").strip()
 
@@ -186,8 +192,10 @@ def call_gemini_for_cluster(cluster):
         except (APIError, json.JSONDecodeError, Exception) as e:
             last_error = e
             if gemini_keys.is_rate_limit(e):
-                # This project's quota is exhausted — move to the next key so
-                # the next model attempt hits a different account's quota.
+                # This project's quota is exhausted — honor the retry hint,
+                # then move to the next key so the next attempt hits a
+                # different account's quota (which has its own per-minute + daily).
+                gemini_keys.sleep_on_429(e)
                 gemini_keys.rotate()
                 client = get_llm_client()
                 print(f"    Rate limited on key ...{gemini_keys.current_key()[-6:]}, rotating")

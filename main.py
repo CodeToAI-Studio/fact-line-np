@@ -369,12 +369,10 @@ async def synthesize_answer(request: Request, payload: SynthesisRequest, db: Ses
     # Fast path: try the known-good models first.
     for model_name in PRIMARY_MODELS:
         try:
-            response = await run_in_threadpool(
-                lambda mn=model_name: llm_client.models.generate_content(
-                    model=mn,
-                    contents=prompt,
-                )
-            )
+            def _call(mn=model_name):
+                gemini_keys.pace()
+                return llm_client.models.generate_content(model=mn, contents=prompt)
+            response = await run_in_threadpool(_call)
             if response and response.text:
                 answer_text = response.text
                 model_used = model_name
@@ -402,12 +400,10 @@ async def synthesize_answer(request: Request, payload: SynthesisRequest, db: Ses
             if model_name in PRIMARY_MODELS:
                 continue  # already tried
             try:
-                response = await run_in_threadpool(
-                    lambda mn=model_name: llm_client.models.generate_content(
-                        model=mn,
-                        contents=prompt,
-                    )
-                )
+                def _call(mn=model_name):
+                    gemini_keys.pace()
+                    return llm_client.models.generate_content(model=mn, contents=prompt)
+                response = await run_in_threadpool(_call)
                 if response and response.text:
                     answer_text = response.text
                     model_used = model_name
@@ -447,6 +443,7 @@ def _stream_gemini_sync(model_name: str, prompt: str, loop: asyncio.AbstractEven
     can't be awaited directly without stalling FastAPI's event loop. This
     pulls chunks off it and hands them to the event loop via the queue."""
     try:
+        gemini_keys.pace()
         stream = llm_client.models.generate_content_stream(model=model_name, contents=prompt)
         for chunk in stream:
             text = getattr(chunk, "text", None)

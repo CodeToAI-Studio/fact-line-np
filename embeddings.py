@@ -64,6 +64,7 @@ def get_embedding(text: str, task_type: str = "RETRIEVAL_DOCUMENT") -> list:
 
     for attempt in range(MAX_RETRIES):
         try:
+            gemini_keys.pace()
             response = client.models.embed_content(
                 model=EMBEDDING_MODEL,
                 contents=text,
@@ -78,9 +79,10 @@ def get_embedding(text: str, task_type: str = "RETRIEVAL_DOCUMENT") -> list:
             is_rate_limit = "RESOURCE_EXHAUSTED" in str(e) or "429" in str(e)
             if not is_rate_limit or attempt == MAX_RETRIES - 1:
                 raise
-            # A 429 means the current project's quota is gone — rotate to the
-            # next key (if any) so a different account's quota is tried before
-            # backing off. Retrying the same exhausted key was pointless.
+            # A 429 means the current project's quota is gone — honor the retry
+            # hint, rotate to the next key (if any) so a different account's
+            # quota is tried before backing off.
+            gemini_keys.sleep_on_429(e)
             gemini_keys.rotate()
             client = get_client()
             print(f"    Rate limited on {gemini_keys.current_key()[-6:]}..., rotating + waiting {backoff}s (attempt {attempt + 1}/{MAX_RETRIES})...")
