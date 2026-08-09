@@ -27,7 +27,7 @@ import os
 import argparse
 import re
 from collections import namedtuple
-from urllib.request import urlopen
+from urllib.request import urlopen, Request
 
 import feedparser
 from bs4 import BeautifulSoup
@@ -52,11 +52,11 @@ from backfill_category import classify as classify_category
 RSS_FEEDS = [
     # Nepal sources
     ("The Kathmandu Post",    "https://kathmandupost.com/rss",                    True),
-    ("The Himalayan Times",   "https://thehimalayantimes.com/feed",               True),
+    ("The Himalayan Times",   "https://thehimalayantimes.com/rss",                True),
     ("OnlineKhabar English",  "https://english.onlinekhabar.com/feed",            True),
     ("Ratopati",              "https://www.ratopati.com/feed",                    True),
     ("Nagarik Dainik",        "https://nagariknews.nagariknetwork.com/feed",      True),
-    ("Nepali Times",          "https://www.nepalitimes.com/feed/",                True),
+    ("Nepali Times",          "https://www.nepalitimes.com/feed/",                False),  # 404 — RSS discontinued; kept for when/if restored
     ("Techmandu",             "https://techmandu.com/feed/",                      True),
     # International sources
     ("BBC News",              "http://feeds.bbci.co.uk/news/rss.xml",            True),
@@ -84,7 +84,10 @@ def parse_feed(url: str) -> "feedparser.FeedParserDict":
     bounded timeout and hand the file-like object to feedparser so the whole
     feed is bounded to ~FEED_FETCH_TIMEOUT seconds.
     """
-    with urlopen(url, timeout=FEED_FETCH_TIMEOUT) as resp:
+    # Most Nepali news sites reject urllib's default `Python-urllib/3.x`
+    # User-Agent with 403. A browser UA is what they expect, so send one.
+    req = Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36"})
+    with urlopen(req, timeout=FEED_FETCH_TIMEOUT) as resp:
         return feedparser.parse(resp)
 
 

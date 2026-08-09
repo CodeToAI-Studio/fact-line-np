@@ -181,7 +181,7 @@ INITIAL_BACKOFF_SECONDS = 15
 # block classify() — and therefore run_ingestion() — forever (this actually
 # wedged the pipeline during the Railway migration). We run the Gemini call in
 # a daemon thread and bound it to this many seconds instead.
-GEMINI_CALL_TIMEOUT_SECONDS = 30
+GEMINI_CALL_TIMEOUT_SECONDS = 12
 
 
 def _classify_via_gemini_once(title: str, content: str) -> str | None:
@@ -221,14 +221,21 @@ def classify_via_gemini(title: str, content: str) -> str | None:
         if thread.is_alive():
             # Call is still hung after the timeout — abandon it and move on.
             # The daemon thread is left to die with the process.
+            print(f"  [classify] Gemini call timed out after {GEMINI_CALL_TIMEOUT_SECONDS}s — skipping classification for this article")
             return None
         if "answer" in result:
             return result["answer"]
 
         error = result.get("error")
         is_rate_limit = error is not None and ("RESOURCE_EXHAUSTED" in str(error) or "429" in str(error))
-        if not is_rate_limit or attempt == MAX_RETRIES - 1:
-            return None  # classification is non-critical -- fail soft, don't crash the caller
+        if is_rate_limit:
+            # Quota is exhausted — retrying only burns sleep time on a limit
+            # that won't clear this run. Fail soft now; the next pipeline cycle
+            # retries naturally.
+            print(f"  [classify] Gemini rate-limited (429) — skipping classification for this article")
+            return None
+        if attempt == MAX_RETRIES - 1:
+            return None  # non-rate-limit errors: no point retrying
         time.sleep(backoff)
         backoff *= 2
 
