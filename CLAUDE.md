@@ -771,11 +771,11 @@ the blocker below is resolved or the hard rules change, update `RESUME.md` too.
     stale local `localhost:5433` copy, and never run two watchers/bots at once (double
     publish risk). Exactly one of each should be running.
 16. **Deferred — WhatsApp approval.** Code is in the repo; revisit once deployed.
-17. **GEMINI_API_KEY is on a free-tier project and is currently 429 rate-limited**
-    (`RESOURCE_EXHAUSTED`, daily 500-request cap on `gemini-3.5-flash-lite`). It blocks
-    `generate_posts` drafting AND `/synthesize` on the live site. Either move to a
-    billing-enabled project or wait for the daily reset. The pipeline now fails soft on
-    429 (no crash/hang) and retries next cycle.
+17. **GEMINI_API_KEY is on a free-tier project and is 429 rate-limited** (`RESOURCE_EXHAUSTED`,
+    daily 500-request cap per project). **Multi-key rotation is now implemented** — `gemini_keys.py`
+    (`GEMINI_API_KEYS` comma-separated) auto-switches to the next key on 429 across all four
+    client sites. **Action:** add keys from additional Google accounts to `.env` to multiply
+    daily quota at zero cost. The pipeline fails soft on 429 (no crash/hang) and retries next cycle.
 
 ---
 
@@ -831,12 +831,15 @@ the blocker below is resolved or the hard rules change, update `RESUME.md` too.
 
 ## Open Questions / Blockers
 
-1. **`FACEBOOK_PAGE_ACCESS_TOKEN` expired 2026-08-07.** `publisher.py` will 400 on every new
-   post until it's regenerated. This is the top action item (What's Next #13): exchange or
-   re-issue a long-lived token at https://developers.facebook.com against App `961662956934562`.
-2. **Is `GEMINI_API_KEY` on a billing-enabled project?** Flagged risk: free-tier rate limits
-   will reproduce the original 429 errors even with valid model names. Relevant to both
-   synthesis and any bulk `ingest.py` run.
+1. **`FACEBOOK_PAGE_ACCESS_TOKEN` — WORKING (re-verified 2026-08-09).** Live publish
+   succeeded (Post 25). If it expires again, regenerate at https://developers.facebook.com
+   against App `961662956934562`.
+2. **`GEMINI_API_KEY` is on a free-tier project — 429 rate-limited.** Confirmed live
+   2026-08-09 (500 req/day per project). Mitigation in place: `gemini_keys.py` multi-key
+   rotation (`GEMINI_API_KEYS`) spreads requests across Google accounts. **Action for user:**
+   generate keys from additional Google accounts and add them comma-separated to `.env`.
+   To fully remove the cap, enable billing on the Gemini project (that also unlocks
+   `/synthesize` on the live site).
 3. **Who populated `region` for the existing 240 rows?** Not `ingest.py` (confirmed by
    inspection) and there is no `backfill_region.py`. Likely manual SQL or a deleted script.
    Harmless now that ingestion is set explicitly, but worth knowing if the values look wrong.
