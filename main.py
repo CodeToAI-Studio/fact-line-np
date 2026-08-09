@@ -206,8 +206,16 @@ class PostResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-@app.get("/")
+@app.get("/", include_in_schema=False)
 def read_root():
+    # The root should show the news frontend, not the API health JSON.
+    return RedirectResponse(url="/web", status_code=307)
+
+
+@app.get("/health", include_in_schema=False)
+def health():
+    # Dedicated health probe so the platform (Railway) and any uptime checker
+    # have a clear 200 "alive" endpoint. The old root JSON moved here.
     return {"status": "online", "message": "News RAG Engine API is running."}
 
 
