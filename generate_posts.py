@@ -39,6 +39,7 @@ from google.genai.errors import APIError
 
 from models import Article, Post, PlatformPost, SessionLocal
 from llm_models import PRIMARY_MODELS
+import gemini_keys
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
@@ -65,7 +66,7 @@ _llm_client = None
 def get_llm_client():
     global _llm_client
     if _llm_client is None:
-        _llm_client = genai.Client(api_key=GEMINI_API_KEY)
+        _llm_client = gemini_keys.get_client()
     return _llm_client
 
 
@@ -184,6 +185,12 @@ def call_gemini_for_cluster(cluster):
             return data, model_name
         except (APIError, json.JSONDecodeError, Exception) as e:
             last_error = e
+            if gemini_keys.is_rate_limit(e):
+                # This project's quota is exhausted — move to the next key so
+                # the next model attempt hits a different account's quota.
+                gemini_keys.rotate()
+                client = get_llm_client()
+                print(f"    Rate limited on key ...{gemini_keys.current_key()[-6:]}, rotating")
             continue
 
     raise RuntimeError(f"Gemini call failed for all models: {last_error}")

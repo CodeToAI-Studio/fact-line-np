@@ -25,6 +25,8 @@ import time
 from google import genai
 from google.genai import types
 
+import gemini_keys
+
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 EMBEDDING_MODEL = "gemini-embedding-001"
 EMBEDDING_DIMENSIONS = 768
@@ -38,7 +40,7 @@ _client = None
 def get_client():
     global _client
     if _client is None:
-        _client = genai.Client(api_key=GEMINI_API_KEY)
+        _client = gemini_keys.get_client()
     return _client
 
 
@@ -76,7 +78,12 @@ def get_embedding(text: str, task_type: str = "RETRIEVAL_DOCUMENT") -> list:
             is_rate_limit = "RESOURCE_EXHAUSTED" in str(e) or "429" in str(e)
             if not is_rate_limit or attempt == MAX_RETRIES - 1:
                 raise
-            print(f"    Rate limited, waiting {backoff}s (attempt {attempt + 1}/{MAX_RETRIES})...")
+            # A 429 means the current project's quota is gone — rotate to the
+            # next key (if any) so a different account's quota is tried before
+            # backing off. Retrying the same exhausted key was pointless.
+            gemini_keys.rotate()
+            client = get_client()
+            print(f"    Rate limited on {gemini_keys.current_key()[-6:]}..., rotating + waiting {backoff}s (attempt {attempt + 1}/{MAX_RETRIES})...")
             time.sleep(backoff)
             backoff *= 2  # back off further each time, in case the limit is tighter than expected
 

@@ -33,6 +33,7 @@ from admin_auth import (
 )
 from embeddings import get_embedding
 from llm_models import PRIMARY_MODELS, list_available_models
+import gemini_keys
 from whatsapp_client import send_text_message
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -82,8 +83,8 @@ async def lifespan(app: FastAPI):
         logger.error("Database bootstrap FAILED: %s", exc)
         raise
 
-    if GEMINI_API_KEY:
-        llm_client = genai.Client(api_key=GEMINI_API_KEY)
+    if GEMINI_API_KEY or gemini_keys.key_count():
+        llm_client = gemini_keys.get_client()
 
     # Seed default site settings and admin user on first run.
     # Admin credentials are REQUIRED environment variables — there is no
@@ -380,6 +381,10 @@ async def synthesize_answer(request: Request, payload: SynthesisRequest, db: Ses
                 break
         except APIError as e:
             last_error = e
+            if gemini_keys.is_rate_limit(e):
+                gemini_keys.rotate()
+                llm_client = gemini_keys.get_client()
+                logger.warning("Gemini rate-limited, rotated to key ...%s", gemini_keys.current_key()[-6:])
             continue
         except Exception as e:
             last_error = e
@@ -409,6 +414,10 @@ async def synthesize_answer(request: Request, payload: SynthesisRequest, db: Ses
                     break
             except Exception as e:
                 last_error = e
+                if gemini_keys.is_rate_limit(e):
+                    gemini_keys.rotate()
+                    llm_client = gemini_keys.get_client()
+                    logger.warning("Gemini rate-limited, rotated to key ...%s", gemini_keys.current_key()[-6:])
                 continue
 
     if answer_text is None:

@@ -39,6 +39,7 @@ from google import genai
 
 from models import Article, SessionLocal
 from llm_models import CHEAP_MODEL
+import gemini_keys
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL = CHEAP_MODEL  # single-word classification, not synthesis -- cost dominates
@@ -48,7 +49,7 @@ _client = None
 def get_client():
     global _client
     if _client is None:
-        _client = genai.Client(api_key=GEMINI_API_KEY)
+        _client = gemini_keys.get_client()
     return _client
 
 
@@ -227,12 +228,17 @@ def classify_via_gemini(title: str, content: str) -> str | None:
             return result["answer"]
 
         error = result.get("error")
-        is_rate_limit = error is not None and ("RESOURCE_EXHAUSTED" in str(error) or "429" in str(error))
+        is_rate_limit = error is not None and gemini_keys.is_rate_limit(error)
         if is_rate_limit:
-            # Quota is exhausted — retrying only burns sleep time on a limit
-            # that won't clear this run. Fail soft now; the next pipeline cycle
-            # retries naturally.
-            print(f"  [classify] Gemini rate-limited (429) — skipping classification for this article")
+            # The current project's quota is exhausted. If there's another
+            # key configured, switch to it and retry — a different account
+            # has its own fresh quota. If all keys are exhausted, fail soft
+            # now; the next pipeline cycle retries naturally.
+            if gemini_keys.key_count() > 1 and attempt < MAX_RETRIES - 1:
+                gemini_keys.rotate()
+                print(f"  [classify] Gemini rate-limited on key ...{gemini_keys.current_key()[-6:]}, rotating")
+                continue
+            print(f"  [classify] all Gemini keys rate-limited (429) — skipping classification for this article")
             return None
         if attempt == MAX_RETRIES - 1:
             return None  # non-rate-limit errors: no point retrying
