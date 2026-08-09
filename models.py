@@ -13,6 +13,11 @@ if DATABASE_URL.startswith("postgres://"):
 engine = create_engine(
     DATABASE_URL,
     pool_pre_ping=True,
+    # Batch processes (watcher, bot, migrations) and the web service all share
+    # this engine. Keep total connections modest so a few workers can't exhaust
+    # the deployed Postgres max_connections.
+    pool_size=5,
+    max_overflow=5,
     connect_args={"connect_timeout": 10},
 )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

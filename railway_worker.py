@@ -1,63 +1,67 @@
 """
-railway_worker.py — run watch_pipeline / telegram_bot under Railway as a robust
-long-running worker.
+railway_worker.py — run watch_pipeline / telegram_bot under Railway as a
+long-running worker without an HTTP dependency.
 
-Railway kills processes that don't bind its `PORT` (the healthcheck has
-nowhere to report healthy). These pipeline scripts are pure long-running
-loops with no HTTP endpoint, so we start the target loop AND a tiny HTTP
-server on the injected PORT that always returns 200. That keeps Railway's
-healthcheck satisfied while the worker runs forever.
+Railway background services monitor process liveness (container stay-alive /
+exit code), NOT HTTP health pings. Set the service's **Health Check Path to
+EMPTY** in the Railway dashboard for these two services; do not point it at a
+hypothetical `/health` endpoint. These pipeline scripts are pure long-running
+loops with no web server, so there is nothing to bind $PORT for, and adding a
+fake HTTP listener here would only reintroduce a failure point (a wedged loop
+that appears "healthy" or an HTTP thread that dies).
 
-Usage:
-    python railway_worker.py watch      # run watch_pipeline.py
-    python railway_worker.py bot        # run telegram_bot.py
+Usage (set as the service's **Start Command**):
+    python railway_worker.py watch      # run watch_pipeline.main()
+    python railway_worker.py bot        # run telegram_bot.main()
 
-Env:
-    PORT (Railway-injected) — the health port. Falls back to 8080 if unset
-    actually rely on (it is the sheet).
-
-Never import this file's module-level socket server as a dependency — it is
-a thin launcher meant to be called directly.
+The wrapper pre-checks the required env vars and exits NON-ZERO (so Railway
+logs a clear reason and restarts) instead of reporting a missing secret as a
+successful run.
 """
 import os
 import sys
-import time
-import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-PORT = int(os.getenv("PORT", "8080"))
+from dotenv import load_dotenv
 
-
-class _Health(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header("Content-Type", "text/plain")
-        self.send_header("Content-Length", "2")
-        self.end_headers()
-        self.wfile.write(b"ok")
-
-    def log_message(self, *args):  # silence request logging
-        pass
+load_dotenv()  # no-op on Railway (no .env file); loads local .env during dev
 
 
-def _serve_health():
-    try:
-        srv = ThreadingHTTPServer(("0.0.0.0", PORT), _Health)
-        srv.serve_forever()
-    except Exception as exc:
-        print(f"[railway_worker] health server error: {exc}", flush=True)
+def _require(*names: str) -> None:
+    missing = [n for n in names if not (os.getenv(n) or "").strip()]
+    if missing:
+        print(
+            f"[railway_worker] Missing required env var(s): {', '.join(missing)}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
 
-def run_worker(module_name: str, func_name: str):
-    import importlib
+def run_worker(kind: str) -> None:
+    if kind == "watch":
+        _require(
+            "DATABASE_URL",
+            "GEMINI_API_KEY",
+            "FACEBOOK_PAGE_ID",
+            "FACEBOOK_PAGE_ACCESS_TOKEN",
+            "INSTAGRAM_BUSINESS_ACCOUNT_ID",
+        )
+        from watch_pipeline import main
+    elif kind == "bot":
+        _require("DATABASE_URL", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID")
+        from telegram_bot import main
+    else:
+        print(
+            f"railway_worker: unknown worker kind {kind!r} (expected 'watch' or 'bot')",
+            file=sys.stderr,
+        )
+        sys.exit(2)
 
-    mod = importlib.import_module(module_name)
-    target = getattr(mod, func_name)
+    print(f"[railway_worker] starting {kind} ...", flush=True)
+    main()  # blocks forever (loops in the target script)
 
-    # Start the health HTTP server in a daemon thread so it never blocks exit.
-    t = threading.Thread(target=_serve_health, daemon=True)
-    t.start()
-    print(f"[railway_worker] health server on :{PORT}", flush=True)
 
-    # Run the target's main() in the main thread (forever).
-    target()
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        print("Usage: python railway_worker.py <watch|bot>", file=sys.stderr)
+        sys.exit(2)
+    run_worker(sys.argv[1])

@@ -103,24 +103,36 @@ watcher cycle.
 
 To make Fact Line NP **self-running 24/7** (no local PC), add two more
 services from the same repo. Both are long-running loops with **no HTTP
-port**, so they run through the `railway_worker.py` wrapper, which binds the
-Railway-injected `PORT` as a `/` health endpoint returning 200 (so Railway
-never kills them for "missing healthcheck").
+port** — Railway background services track **process liveness (container
+stay-alive / exit code)**, so set the **Health Check Path to EMPTY** for both.
 
-| Service | Start command | Env vars (shared) |
-|---|---|---|
-| `watcher` | `python railway_worker.py watch` | `DATABASE_URL` (injected), `GEMINI_API_KEY`, `FACEBOOK_PAGE_ID`, `FACEBOOK_PAGE_ACCESS_TOKEN`, `INSTAGRAM_BUSINESS_ACCOUNT_ID` |
-| `bot` | `python railway_worker.py bot` | `DATABASE_URL`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` |
+| Service | Start command | Health check path | Env vars (shared) |
+|---|---|---|---|
+| `watcher` | `python railway_worker.py watch` | **(empty)** | `DATABASE_URL` (share from Postgres), `GEMINI_API_KEY`, `FACEBOOK_PAGE_ID`, `FACEBOOK_PAGE_ACCESS_TOKEN`, `INSTAGRAM_BUSINESS_ACCOUNT_ID` |
+| `bot` | `python railway_worker.py bot` | **(empty)** | `DATABASE_URL`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` |
 
-Add them: **New Service → GitHub repo → `fact-line-np`**, then set the **Start
-Command** to the row above (overrides the web `railway.json` start).
-Railway-created from the repo, they pick up the same build.
+`railway_worker.py` is a thin launcher — it pre-checks required env vars
+(exits non-zero with a clear log if one is missing), then runs the target's
+`main()`. It does **not** bind `$PORT` or fake an HTTP healthcheck; Railway
+relies on the process staying alive. Do **not** set a Health Check Path on
+these services.
 
-**Important — the two sources of truth problem:**
-- These workers write to **whatever `DATABASE_URL` they get**.
-- If you want them to run the **live site's** DB (single source of truth), give
-  them the deploy's Postgres `DATABASE_URL` (share it like the web service).
-- Do **NOT** run them on a different DB from the live site.
+**⚠️ Order of operations (avoid a startup race):**
+1. **First**, ensure the Railway Postgres has the data you want (see §6).
+   If you're copying the local DB, do that **before** enabling the workers.
+2. **Create** the two worker services and set their env vars, but set
+   **Automatic Deployments = OFF** (or leave them paused) so they don't run
+   against a stale/empty DB mid-sync.
+3. Only after the DB is confirmed → **trigger/redeploy** the workers.
+
+**Connection-pool note:** the shared engine (`models.py`) caps
+`pool_size=5` + `max_overflow=5` per process. Batch workers open 1–2
+connections at a time, so a few services stay well under Postgres
+`max_connections`.
+
+**Single source of truth / double-run protection:**
+- Give both workers the **deploy Postgres's `DATABASE_URL`** (share it like
+  the web service). Do NOT point them at a different DB from the live site.
 - **Stop the local `watch_pipeline.py` + `telegram_bot.py`** once the cloud
   ones are live — otherwise Telegram's `getUpdates` would fight (two bots
-  polling the same token = missed/lost messages and double-publishes).
+  polling the same token = missed messages and double-publishes).
