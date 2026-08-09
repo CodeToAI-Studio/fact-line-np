@@ -714,24 +714,16 @@ the blocker below is resolved or the hard rules change, update `RESUME.md` too.
     verified a cookie set by one process is honored by a fresh one.
 13. **REFRESH `FACEBOOK_PAGE_ACCESS_TOKEN` — CRITICAL, already expired 2026-08-07.**
     `publisher.py` 400s on every new post. Regenerate via Meta (App `961662956934562`).
-14. **Deploy to public server — audit PASSED, ready to push.**
-    Deploy-readiness audit done (What's Done #36): fresh-DB boot simulation passed, no
-    hardcoded secrets, no localhost traps, no code changes needed. Remaining steps need
-    the user (cannot be done from the repo):
-    - Push repo to GitHub (`.env` already gitignored) — `git remote add origin ...` then
-      `git push -u origin master` (or rename `master` → `main` first)
-    - Create Railway project, add PostgreSQL, set env vars from `.env`
-      (`DATABASE_URL`, `GEMINI_API_KEY`, the three `ADMIN_*`, `TELEGRAM_*`, `WHATSAPP_*`),
-      set start command `uvicorn main:app --host 0.0.0.0 --port $PORT`
-    - Point the local watcher/bot at the Railway DB, or run them as separate Railway
-      services/VPS later.
-    Recommended: Railway or Render (free tier, ~30 min setup). Steps:
-    - Push repo to GitHub (exclude `.env` — add to `.gitignore`)
-    - Create a Railway/Render project, set environment variables from `.env`
-    - Set start command: `uvicorn main:app --host 0.0.0.0 --port $PORT`
-    - Point a custom domain (e.g. factlinenp.com) at the deployed URL
-    - For the watcher (`watch_pipeline.py`) + Telegram bot: run as separate Railway
-      services or on a cheap VPS alongside the API.
+14. **DEPLOY IN PROGRESS — GitHub pushed; Railway next.**
+    - `fact-line-np` created at `github.com/CodeToAI-Studio/fact-line-np` (public, branch
+      `master`, `.env` confirmed not tracked), pushed from this working copy.
+    - `railway.json` (Nixpacks build, `uvicorn main:app --host 0.0.0.0 --port $PORT`,
+      `/` healthcheck) + `Railway.md` guide added are committed.
+    - Remaining (user, in browser): create Railway project from the repo, add
+      PostgreSQL, set env vars (`GEMINI_API_KEY`, `ADMIN_*`; Railway injects
+      `DATABASE_URL`), then deploy. See `Railway.md`.
+    - After deploy: verify `/web`, migrate local Postgres data if desired
+      (Postgres 16 is at `/c/Program Files/PostgreSQL/16/`; also has Docker).
 15. **Deferred — WhatsApp approval.** Code is in the repo; revisit once deployed.
 
 ---
