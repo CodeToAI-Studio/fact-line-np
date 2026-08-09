@@ -1,29 +1,31 @@
 """
-railway_worker.py — run watch_pipeline / telegram_bot under Railway as a
-long-running worker without an HTTP dependency.
+railway_worker.py — run watch_pipeline / telegram_bot under Railway with a
+real HTTP health endpoint.
 
-Railway background services monitor process liveness (container stay-alive /
-exit code), NOT HTTP health pings. Set the service's **Health Check Path to
-EMPTY** in the Railway dashboard for these two services; do not point it at a
-hypothetical `/health` endpoint. These pipeline scripts are pure long-running
-loops with no web server, so there is nothing to bind $PORT for, and adding a
-fake HTTP listener here would only reintroduce a failure point (a wedged loop
-that appears "healthy" or an HTTP thread that dies).
+Railway health-checks a service over HTTP on its injected PORT. These pipeline
+scripts are long-running loops with no web server, so we give them a small
+threaded HTTP server on that PORT returning 200 OK on `/`, `/health` and any
+other path Railway probes. The worker loop runs in the main thread; the HTTP
+server runs in a background thread, so a wedged loop never looks falsely
+"healthy" (if the loop dies, the process exits and Railway restarts it).
 
 Usage (set as the service's **Start Command**):
     python railway_worker.py watch      # run watch_pipeline.main()
     python railway_worker.py bot        # run telegram_bot.main()
 
-The wrapper pre-checks the required env vars and exits NON-ZERO (so Railway
-logs a clear reason and restarts) instead of reporting a missing secret as a
-successful run.
+Env:
+    PORT (Railway-injected) — HTTP port to serve health on. Defaults to 8080.
 """
 import os
 import sys
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from dotenv import load_dotenv
 
 load_dotenv()  # no-op on Railway (no .env file); loads local .env during dev
+
+PORT = int(os.getenv("PORT", "8080"))
 
 
 def _require(*names: str) -> None:
@@ -34,6 +36,39 @@ def _require(*names: str) -> None:
             file=sys.stderr,
         )
         sys.exit(1)
+
+
+class _Health(BaseHTTPRequestHandler):
+    def _respond(self):
+        body = b"ok"
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
+    def do_GET(self):
+        self._respond()
+
+    def do_HEAD(self):
+        self._respond()
+
+    def log_message(self, *args):  # keep logs clean for the health endpoint
+        pass
+
+
+def _serve_health() -> None:
+    """Serve 200 OK health responses from a background thread."""
+    try:
+        server = ThreadingHTTPServer(("0.0.0.0", PORT), _Health)
+    except Exception as exc:
+        print(f"[railway_worker] could not bind health server on :{PORT}: {exc}", file=sys.stderr)
+        return
+    print(f"[railway_worker] health endpoint on http://0.0.0.0:{PORT}/", flush=True)
+    server.serve_forever()
 
 
 def run_worker(kind: str) -> None:
@@ -55,6 +90,9 @@ def run_worker(kind: str) -> None:
             file=sys.stderr,
         )
         sys.exit(2)
+
+    # Health endpoint in a background daemon thread — never blocks the loop.
+    threading.Thread(target=_serve_health, daemon=True).start()
 
     print(f"[railway_worker] starting {kind} ...", flush=True)
     main()  # blocks forever (loops in the target script)
