@@ -73,12 +73,12 @@ pg_restore -d <railway-db-url> news_db.dump --no-owner --clean
 > Easiest: use **Railway's PostgreSQL → Connect tab** → "Connect CLI" command,
 > then run `pg_restore`.
 
-**Skip here** and just press deploy if you'd rather start fresh; the very
-responsive — new articles stream in on the 10-minute watcher cycle.
+**Skip this step** and just press deploy if you'd rather start fresh; the
+pipeline is very responsive — new articles stream in on the 10-minute
+watcher cycle.
 
 > ⚠️ The local **watcher/bot** still runs against the local DB. Once you point
 > them at Railway's `DATABASE_URL`, they become extra workers. Leaving them to
 > the old DB just keeps the local copy alive — that's fine if you ever want a
 > fallback, but for a single source of truth, re-point everything at Railway
-> after the deploy (see the `DATABASE_URL` change) and stop local.
-```
+> after the deploy and stop the local watcher/bot.
