@@ -45,6 +45,8 @@ from datetime import datetime, timezone
 import requests as http_requests
 from dotenv import load_dotenv
 
+import images
+
 load_dotenv()
 
 # Windows cp1252 console can't encode emoji or non-ASCII content.
@@ -138,19 +140,19 @@ def post_to_facebook(post: Post, dry_run: bool = False) -> tuple[bool, str, str]
 
 def post_to_instagram(post: Post, dry_run: bool = False) -> tuple[bool | None, str, str]:
     """
-    IG feed posts require an image_url. Posts without one are skipped —
-    they stay pending so a retry is possible once an image is attached.
+    Every post is guaranteed an image (see images.acquire_post_image): the
+    source image is downloaded + normalized to an IG-ready square and saved
+    locally, or a branded placeholder is generated when none exists. The
+    local JPEG is uploaded as a multipart file, so IG never depends on an
+    external URL being reachable and the aspect-ratio error (36003) cannot
+    recur.
 
     Returns (success, platform_post_id, log_message).
       True  — published successfully
       False — API error; caller marks PlatformPost as "failed"
-      None  — skipped (no image); caller leaves PlatformPost as "pending"
     """
     if not INSTAGRAM_BUSINESS_ACCOUNT_ID or not FACEBOOK_PAGE_ACCESS_TOKEN:
         return False, "", "Missing INSTAGRAM_BUSINESS_ACCOUNT_ID or FACEBOOK_PAGE_ACCESS_TOKEN in .env"
-
-    if not post.image_url:
-        return None, "", "⚠️  No image_url — Instagram feed posts require an image; leaving pending"
 
     caption = _truncate((post.social_summary or "").strip(), IG_CAPTION_LIMIT)
     if not caption:
@@ -160,16 +162,32 @@ def post_to_instagram(post: Post, dry_run: bool = False) -> tuple[bool | None, s
         print(f"    [IG DRY RUN] with image: {caption[:80]!r}")
         return True, "dry-run-ig", "dry run"
 
-    # Step 1 — create media container
+    # Acquire a guaranteed image (source downloaded+normalized, or branded
+    # placeholder). Store the bytes on the post and use the absolute public
+    # /post_image/{id}.jpg URL — IG requires a reachable public image_url.
+    site_base = os.getenv("SITE_BASE_URL", "").strip()
+    if not site_base:
+        print("    [IG] WARNING: SITE_BASE_URL not set — IG image_url will be relative and may fail")
+    acquired = images.acquire_post_image(
+        post.image_url, post.social_summary or post.full_body or "", post.id
+    )
+    if not acquired:
+        return False, "", "Could not acquire an image for this post"
+    post.image_data = acquired
+    post.image_url = images.public_image_url(post.id, site_base or None)
+    if not post.image_source_credit:
+        post.image_source_credit = "Fact Line NP"
+
+    # Step 1 — create media container using the public image URL.
     try:
         r1 = http_requests.post(
             f"{GRAPH_BASE}/{INSTAGRAM_BUSINESS_ACCOUNT_ID}/media",
             data={
-                "image_url": post.image_url,
+                "image_url": images.public_image_url(post.id, site_base or None),
                 "caption": caption,
                 "access_token": FACEBOOK_PAGE_ACCESS_TOKEN,
             },
-            timeout=30,
+            timeout=60,
         )
         d1 = r1.json()
     except Exception as e:

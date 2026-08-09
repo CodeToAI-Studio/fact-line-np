@@ -1,5 +1,5 @@
 import os
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, create_engine, func
+from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, LargeBinary, create_engine, func
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 from pgvector.sqlalchemy import Vector
 
@@ -59,6 +59,10 @@ class Post(Base):
     language = Column(String, nullable=True)           # "nepali" or "english" -- which Gemini chose for this story
     image_url = Column(String, nullable=True)
     image_source_credit = Column(String, nullable=True)
+    # Normalized rehosted image bytes (JPEG) stored in the DB so the public
+    # /post_image/{id}.jpg route can serve them permanently (survives Railway
+    # restarts) and IG/FB always have a stable public image_url.
+    image_data = Column(LargeBinary, nullable=True)
     region = Column(String, nullable=True, index=True)
     category = Column(String, nullable=True, index=True)
 

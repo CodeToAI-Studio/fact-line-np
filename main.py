@@ -15,7 +15,7 @@ from google import genai
 from google.genai.errors import APIError
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import StreamingResponse, PlainTextResponse
+from fastapi.responses import StreamingResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, ConfigDict, Field
@@ -217,6 +217,24 @@ def health():
     # Dedicated health probe so the platform (Railway) and any uptime checker
     # have a clear 200 "alive" endpoint. The old root JSON moved here.
     return {"status": "online", "message": "News RAG Engine API is running."}
+
+
+@app.get("/post_image/{post_id}.jpg", include_in_schema=False)
+def post_image(post_id: int, db: Session = Depends(get_db)):
+    """Serve a post's rehosted image from the DB (persistent, public URL).
+
+    This is the stable public image_url that Instagram/Facebook use for the
+    post's image — the pipeline stores normalized JPEG bytes on
+    Post.image_data, and this route serves them, so publishing never depends
+    on an external CDN that 403s/404s."""
+    post = db.get(Post, post_id)
+    if not post or not post.image_data:
+        raise HTTPException(status_code=404, detail="Image not found")
+    return Response(
+        content=bytes(post.image_data),
+        media_type="image/jpeg",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 
 
 @app.get("/articles", response_model=List[ArticleResponse])
