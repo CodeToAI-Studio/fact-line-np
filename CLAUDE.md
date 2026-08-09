@@ -725,6 +725,14 @@ the blocker below is resolved or the hard rules change, update `RESUME.md` too.
 - `templates/admin_post_edit.html` — added `Views:` line in Publication Status card.
 - `templates/index.html`, `templates/post.html` — sidebar labels `Recent Stories`/`Latest Stories`
   → `Most Read` (list is now view-ranked; count still admin-only).
+- `.env` — `DATABASE_URL` switched from local `localhost:5433` to the Railway Postgres public
+  proxy (`hayabusa.proxy.rlwy.net:19974/railway`) — single source of truth (2026-08-09).
+- `ingest_rss.py` — added `parse_feed()`: fetch RSS bytes via `urllib` with a bounded timeout
+  (`FEED_FETCH_TIMEOUT`, default 20s) and hand the stream to feedparser; a failed/blackholed
+  feed is logged and skipped instead of wedging `run_ingestion()`.
+- `backfill_category.py` — `classify_via_gemini` now runs the Gemini call in a daemon thread
+  bounded by `GEMINI_CALL_TIMEOUT_SECONDS` (30s); a hung/rate-limited API fails soft instead
+  of blocking classification (and thus the watcher) forever.
 
 ---
 
@@ -749,19 +757,25 @@ the blocker below is resolved or the hard rules change, update `RESUME.md` too.
 11. ~~Pin `starlette`~~ ✅ Done — `fastapi==0.141.1`, `starlette==1.3.1` in requirements.txt.
 12. ~~Move admin sessions out of the in-memory dict~~ ✅ Done — `AdminSession` DB table;
     verified a cookie set by one process is honored by a fresh one.
-13. **REFRESH `FACEBOOK_PAGE_ACCESS_TOKEN` — CRITICAL, still expired 2026-08-07.**
-    The publisher (local watcher) still 400s on every new post. Regenerate via Meta
-    (App `961662956934562`); update the **local** `.env` (and Railway vars if you want the
-    server to self-publish too). See the "Deploy" note below for the important caveat.
+13. **FACEBOOK PAGE TOKEN — WORKING (re-verified 2026-08-09).** A live publish succeeded
+    (Post 25 → `101313689402371_1028399360033436`), so the token on the local `.env` is
+    valid. If it ever expires again, regenerate via Meta (App `961662956934562`).
 14. ~~**Deploy to public server**~~ ✅ LIVE — `https://web-production-a8dc3.up.railway.app`,
     repo `github.com/CodeToAI-Studio/fact-line-np` (branch `master`, public). Full
     details in What's Done #38 (config, runtime hardening, data migration) and #39.
-15. **RULE / caveat: the deployed Web service now faces the Railway DB and is the live site.
-    Do NOT run the local `watch_pipeline.py`/`generate_posts.py`/Telegram bot against the
-    Railway DB — they'd double-publish.** Keep the local pipeline pointed at the local DB
-    (its own copy) if desired; for a single source of truth, re-point it at Railway and
-    stop local — but never run both.
+15. **RULE / current architecture (updated 2026-08-09): Railway is paid-only for new
+    services, so the bot + watcher CANNOT be co-hosted on Railway.** Instead the local
+    `watch_pipeline.py` + `telegram_bot.py` run against the **Railway DB** (`.env`
+    `DATABASE_URL` = `hayabusa.proxy.rlwy.net:19974/railway`) — the same DB the live site
+    serves. **Single source of truth = Railway DB.** Never run the pipeline against the
+    stale local `localhost:5433` copy, and never run two watchers/bots at once (double
+    publish risk). Exactly one of each should be running.
 16. **Deferred — WhatsApp approval.** Code is in the repo; revisit once deployed.
+17. **GEMINI_API_KEY is on a free-tier project and is currently 429 rate-limited**
+    (`RESOURCE_EXHAUSTED`, daily 500-request cap on `gemini-3.5-flash-lite`). It blocks
+    `generate_posts` drafting AND `/synthesize` on the live site. Either move to a
+    billing-enabled project or wait for the daily reset. The pipeline now fails soft on
+    429 (no crash/hang) and retries next cycle.
 
 ---
 
