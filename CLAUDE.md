@@ -7,7 +7,7 @@ file. Read it top to bottom before touching code.
 Every created/edited/deleted file goes in either "What's Done" (with reasoning) or
 "Small Changes Log" (one line). Keep "What's Next" reordered by priority.
 
-**Last updated:** 2026-08-09 (cont.) — real view counts built
+**Last updated:** 2026-08-09 (cont. 2) — deploy-readiness audit + restarted watcher/bot
 
 ---
 
@@ -572,6 +572,35 @@ the blocker below is resolved or the hard rules change, update `RESUME.md` too.
      the server on the new code; everything then worked. Same lesson as #28: confirm the running
      process actually reloaded before judging a route change.
 
+**36. Deploy-readiness audit passed — the app boots fresh on a prod-like DB.**
+   Designed to de-risk the pending Railway deploy (What's Next #15). Findings:
+   - *No changes were needed.* A true first-run simulation (new scratch Postgres DB →
+     full FastAPI lifespan via TestClient, mirroring Railway: `postgres://` → URL-encoded
+     password, empty database) created the pgvector extension + all tables, seeded 15
+     `SiteSetting` rows + 1 admin user, and served `/web`, `/`, `/admin/login` all **200**
+     with `/admin`+`/admin/posts` correctly **303**-redirecting to login. `posts.view_count`
+     exists on a fresh DB (no manual migration needed).
+   - `scan_for_secrets.py` clean (no hardcoded secrets; `.env` gitignored) — green light
+     to push to GitHub.
+   - Confirmed project is deploy-safe: only user-facing products (Website ~70%, Streamlit
+     UI local-only) — so **deploying now cannot leak anything sensitive**.
+   - *Observations (not blockers):* `app.py` `API_URL` hardcodes `http://127.0.0.1:8000`
+     (dev-only Streamlit UI; not served on Railway); `database.py` is an empty leftover
+     (all real DB/URL logic lives in `models.py`, which already handles `postgres://`);
+     `docker-compose.yml`'s dev password differs from `.env`'s running Postgres (they're
+     unrelated — Docker wasn't running; `.env` uses `localhost:5433`).
+
+**37. Restarted the pipeline watcher + Telegram bot — they had silently stopped.**
+   The site was serving (uvicorn on 8002, `--reload`, latest code) but `watch_pipeline.py`
+   and `telegram_bot.py` were NOT running, so no fresh ingestion/approvals were happening.
+   They auto-start at login via the Startup-folder batch, but on a long-lived box that only
+   fires at next login. Restarted both in the background; `watch_pipeline.log` /
+   `telegram_bot.log` are buffered so they can look empty even while healthy. Verified
+   functional: `ingest_rss.run_ingestion(dry_run=True)` parsed all feeds cleanly
+   (171 new articles ready to ingest). No backlog in DB (350 articles, 0 pending/0 approved).
+   *Lesson:* "is the site up?" is not the same as "is the operation running?" — check the
+   watcher/bot processes alongside the server.
+
 ### Verification performed (2026-08-09 cont.)
 - `py_compile main.py models.py migrate_view_count.py` passes.
 - Migration applied; re-run reports "already exists".
@@ -685,10 +714,17 @@ the blocker below is resolved or the hard rules change, update `RESUME.md` too.
     verified a cookie set by one process is honored by a fresh one.
 13. **REFRESH `FACEBOOK_PAGE_ACCESS_TOKEN` — CRITICAL, already expired 2026-08-07.**
     `publisher.py` 400s on every new post. Regenerate via Meta (App `961662956934562`).
-14. **Deploy to public server — in progress.**
-    Git repo initialized, initial commit made, `.gitignore`, `Procfile`, `railway.toml`
-    created. Next: push to GitHub → create Railway project → add PostgreSQL → set env
-    vars → point local pipeline at Railway DB. See session 2026-08-08 notes.
+14. **Deploy to public server — audit PASSED, ready to push.**
+    Deploy-readiness audit done (What's Done #36): fresh-DB boot simulation passed, no
+    hardcoded secrets, no localhost traps, no code changes needed. Remaining steps need
+    the user (cannot be done from the repo):
+    - Push repo to GitHub (`.env` already gitignored) — `git remote add origin ...` then
+      `git push -u origin master` (or rename `master` → `main` first)
+    - Create Railway project, add PostgreSQL, set env vars from `.env`
+      (`DATABASE_URL`, `GEMINI_API_KEY`, the three `ADMIN_*`, `TELEGRAM_*`, `WHATSAPP_*`),
+      set start command `uvicorn main:app --host 0.0.0.0 --port $PORT`
+    - Point the local watcher/bot at the Railway DB, or run them as separate Railway
+      services/VPS later.
     Recommended: Railway or Render (free tier, ~30 min setup). Steps:
     - Push repo to GitHub (exclude `.env` — add to `.gitignore`)
     - Create a Railway/Render project, set environment variables from `.env`
