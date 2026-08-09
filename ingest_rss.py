@@ -23,9 +23,11 @@ USAGE
 """
 
 import sys
+import os
 import argparse
 import re
 from collections import namedtuple
+from urllib.request import urlopen
 
 import feedparser
 from bs4 import BeautifulSoup
@@ -66,6 +68,24 @@ RSS_FEEDS = [
 # Lightweight stand-in so we can pass a freshly-parsed RSS entry (not yet an
 # Article ORM row) to classify_category(), which expects .url/.source/.title/.content
 ClassifyInput = namedtuple("ClassifyInput", ["url", "source", "title", "content"])
+
+
+# How long to wait for a single feed before giving up (seconds). Defaults
+# to 20s but can be lowered for slow networks / testing.
+FEED_FETCH_TIMEOUT = int(os.getenv("FEED_FETCH_TIMEOUT", "20"))
+
+
+def parse_feed(url: str) -> "feedparser.FeedParserDict":
+    """Fetch + parse an RSS feed with a hard timeout.
+
+    feedparser.parse() itself has no default timeout, so a blackholed feed URL
+    can hang run_ingestion() forever (exactly what happened when the pipeline
+    ran over a slow/blocked network). We fetch the bytes ourselves with a
+    bounded timeout and hand the file-like object to feedparser so the whole
+    feed is bounded to ~FEED_FETCH_TIMEOUT seconds.
+    """
+    with urlopen(url, timeout=FEED_FETCH_TIMEOUT) as resp:
+        return feedparser.parse(resp)
 
 
 def clean_html(raw: str) -> str:
@@ -128,7 +148,11 @@ def run_ingestion(dry_run: bool = False) -> int:
 
         total_new = 0
         for source_name, feed_url, _ in RSS_FEEDS:
-            parsed = feedparser.parse(feed_url)
+            try:
+                parsed = parse_feed(feed_url)
+            except Exception as exc:
+                print(f"[{source_name}] WARNING: fetch failed within {FEED_FETCH_TIMEOUT}s — {type(exc).__name__}: {exc}")
+                continue
 
             if parsed.bozo:
                 print(f"[{source_name}] WARNING: feed parse error — {parsed.bozo_exception}")

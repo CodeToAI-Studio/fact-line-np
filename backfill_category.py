@@ -27,6 +27,7 @@ USAGE
 import argparse
 import os
 import re
+import threading
 import time
 from collections import Counter
 from urllib.parse import urlparse
@@ -176,8 +177,15 @@ GEMINI_CATEGORY_OPTIONS = list(CATEGORY_KEYWORDS.keys())
 MAX_RETRIES = 3
 INITIAL_BACKOFF_SECONDS = 15
 
+# google-genai exposes no request-level timeout, and a hung network call can
+# block classify() — and therefore run_ingestion() — forever (this actually
+# wedged the pipeline during the Railway migration). We run the Gemini call in
+# a daemon thread and bound it to this many seconds instead.
+GEMINI_CALL_TIMEOUT_SECONDS = 30
 
-def classify_via_gemini(title: str, content: str) -> str | None:
+
+def _classify_via_gemini_once(title: str, content: str) -> str | None:
+    """Run the Gemini classification call (must be called in a worker thread)."""
     prompt = f"""Classify this news article into exactly ONE of these categories:
 {", ".join(GEMINI_CATEGORY_OPTIONS)}
 
@@ -187,21 +195,42 @@ Title: {title}
 Content: {content[:600]}
 """
     client = get_client()
+    response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
+    answer = (response.text or "").strip().lower()
+    if answer in GEMINI_CATEGORY_OPTIONS:
+        return answer
+    return None  # Gemini answered something outside the list -- don't guess
+
+
+def classify_via_gemini(title: str, content: str) -> str | None:
     backoff = INITIAL_BACKOFF_SECONDS
 
     for attempt in range(MAX_RETRIES):
-        try:
-            response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
-            answer = (response.text or "").strip().lower()
-            if answer in GEMINI_CATEGORY_OPTIONS:
-                return answer
-            return None  # Gemini answered something outside the list -- don't guess
-        except Exception as e:
-            is_rate_limit = "RESOURCE_EXHAUSTED" in str(e) or "429" in str(e)
-            if not is_rate_limit or attempt == MAX_RETRIES - 1:
-                return None  # classification is non-critical -- fail soft, don't crash the caller
-            time.sleep(backoff)
-            backoff *= 2
+        result: dict = {}
+
+        def _target():
+            try:
+                result["answer"] = _classify_via_gemini_once(title, content)
+            except Exception as exc:
+                result["error"] = exc
+
+        thread = threading.Thread(target=_target, daemon=True)
+        thread.start()
+        thread.join(timeout=GEMINI_CALL_TIMEOUT_SECONDS)
+
+        if thread.is_alive():
+            # Call is still hung after the timeout — abandon it and move on.
+            # The daemon thread is left to die with the process.
+            return None
+        if "answer" in result:
+            return result["answer"]
+
+        error = result.get("error")
+        is_rate_limit = error is not None and ("RESOURCE_EXHAUSTED" in str(error) or "429" in str(error))
+        if not is_rate_limit or attempt == MAX_RETRIES - 1:
+            return None  # classification is non-critical -- fail soft, don't crash the caller
+        time.sleep(backoff)
+        backoff *= 2
 
     return None
 
