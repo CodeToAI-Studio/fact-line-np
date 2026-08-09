@@ -7,7 +7,9 @@ file. Read it top to bottom before touching code.
 Every created/edited/deleted file goes in either "What's Done" (with reasoning) or
 "Small Changes Log" (one line). Keep "What's Next" reordered by priority.
 
-**Last updated:** 2026-08-09 (cont. 3) — LIVE on Railway + data migrated; FB token refresh next
+**Last updated:** 2026-08-10 (cont.) — Full publishing stack live: FB + IG + website all
+publishing with a permanent image guarantee; 49 posts published, 0 failed. All the
+2026-08-09/10 work (multi-key Gemini, pacing, image guarantee, 24/7 research) is captured below.
 
 ---
 
@@ -15,40 +17,50 @@ Every created/edited/deleted file goes in either "What's Done" (with reasoning) 
 
 A Python RAG (Retrieval-Augmented Generation) news pipeline for Nepali + international news.
 
-Flow: RSS feeds → `ingest.py` (fetch, clean, embed, store) → `generate_posts.py` (cluster
+Flow: RSS feeds → `ingest_rss.py` (fetch, clean, embed, store) → `generate_posts.py` (cluster
 same-event articles across outlets, enforce a 2+ independent-source rule, ask Gemini to draft
 a full article + a short social summary) → `Post` rows with `status="pending"` →
-`whatsapp_bot.py` sends each for human approval over WhatsApp → the approver taps
-Approve/Reject → `main.py`'s webhook flips `Post.status`. Separately, `main.py` serves a
-retrieval + synthesis API consumed by a Streamlit UI (`app.py`).
+`telegram_bot.py` sends each for human approval over Telegram → the approver taps
+Approve/Reject → `publisher.py` publishes approved posts to **Facebook + Instagram + website**
+→ `main.py` serves the public news site and the retrieval/synthesis API.
 
 ### Stack
 - **Backend:** FastAPI (`main.py`). Routes are `async def` but the DB layer is **synchronous**
   SQLAlchemy, so DB/embedding calls are wrapped in `run_in_threadpool`.
-- **DB:** PostgreSQL + `pgvector`. Vector search via `Article.embedding.cosine_distance(...)`.
+- **DB:** PostgreSQL + `pgvector` on **Railway** (the single source of truth). Vector search via
+  `Article.embedding.cosine_distance(...)`.
 - **Embeddings:** Gemini `gemini-embedding-001` at 768 dimensions (`embeddings.py`).
-- **LLM:** Google Gemini via the `google-genai` SDK.
-- **Frontend:** Streamlit (`app.py`).
-- **Approval channel:** WhatsApp Business Cloud API. `telegram_bot.py` is the earlier
-  approval channel, still in the repo.
+- **LLM:** Google Gemini via the `google-genai` SDK, with **5 rotating API keys** (`gemini_keys.py`)
+  to spread across free-tier per-project quotas.
+- **Frontend:** Public news website (Jinja2 templates + `static/style.css`) + a local-only
+  Streamlit UI (`app.py`).
+- **Approval channel:** Telegram. (WhatsApp is deferred/out of scope for launch.)
+- **Hosting:** Public site on **Railway**; the watcher + Telegram bot run **locally on the user's PC**
+  against the Railway DB (Railway is paid-only for new services).
 
 ### File map
 | File | Role |
 |---|---|
-| `main.py` | FastAPI app: `/articles`, `/query`, `/synthesize`, `/synthesize/stream`, WhatsApp webhook |
-| `models.py` | SQLAlchemy models — `Article`, `Post`, `PlatformPost` |
-| `app.py` | Streamlit frontend |
+| `main.py` | FastAPI app: public `/web` site, `/articles`, `/query`, `/synthesize`, `/post_image/{id}.jpg`, `/admin` CMS, `/health`, root redirect → `/web` |
+| `models.py` | SQLAlchemy models — `Article`, `Post` (incl. `image_data` bytea), `PlatformPost`, admin tables |
+| `app.py` | Streamlit frontend (local-only dev tool) |
 | `embeddings.py` | Shared embedding helper — **the only** place embeddings are computed |
 | `llm_models.py` | Shared Gemini generation-model list + discovery fallback |
-| `ingest.py` | RSS ingestion → `Article` rows |
-| `search.py` | CLI vector search (debug tool) |
-| `rag_chat.py` | CLI RAG question-answering (debug tool) |
-| `generate_posts.py` | Clustering + verification + drafting → `Post` rows |
+| `gemini_keys.py` | **Shared Gemini multi-key rotation + per-key pacing** (all client sites delegate here) |
+| `images.py` | **Permanent image guarantee**: download/normalize source images or generate branded placeholder; `public_image_url()` |
+| `ingest_rss.py` | Canonical RSS ingestion → `Article` rows (browser UA + feed timeout) |
+| `generate_posts.py` | Clustering + verification + drafting → `Post` rows (lite-first model order) |
+| `publisher.py` | Publishes approved posts → FB + IG (using public `/post_image` URLs) + website |
+| `telegram_bot.py` | Telegram approval bot (single-instance lock, DB-backed) |
+| `watch_pipeline.py` | Continuous loop: ingest → generate → publish → retention |
 | `backfill_category.py` | One-off: classify existing articles into categories |
-| `whatsapp_bot.py` | Outbound only — sends pending posts for approval |
-| `whatsapp_client.py` | Shared WhatsApp Cloud API client |
-| `main.py` webhook | Inbound — receives button taps (**not** in `whatsapp_bot.py`) |
-| `migrate_*.py` | One-off schema migrations |
+| `backfill_post_images.py` | One-off: acquire+store images for stuck posts, reset IG/FB rows |
+| `migrate_post_image_data.py` | Idempotent: adds `posts.image_data` (bytea) |
+| `migrate_*.py` | Other one-off schema migrations |
+| `railway_worker.py` | Railway worker wrapper (health endpoint) — not currently used (pipeline runs locally) |
+| `retention.py` | Deletes consumed/stale article rows |
+| `search.py`, `rag_chat.py` | CLI debug tools |
+| `whatsapp_bot.py`, `whatsapp_client.py` | Deferred WhatsApp channel (unused; Telegram is active) |
 | `RESUME.md` | Self-contained prompt to paste into an AI chat with **no** repo access |
 | `PROJECT_BRIEFING.md` | Superseded by this file; kept as a pointer |
 
@@ -650,6 +662,71 @@ the blocker below is resolved or the hard rules change, update `RESUME.md` too.
      postgres --tunnel-only` may or may not still be alive — see next step; if it's dead,
      the next Railway CLI operation re-links automatically.
 
+### Session 2026-08-09/10 (cont.) — Pipeline on Railway DB, publishing fully working
+
+**40. Consolidated the pipeline onto the Railway DB as the single source of truth.**
+   - Problem: two DBs had drifted (local had extra posts/articles the live site never saw),
+     and **four** Python processes (2 watchers + 2 bots) were running against the local DB —
+     a double-publish risk. Fixed: `.env` `DATABASE_URL` now points at Railway Postgres
+     (`hayabusa.proxy.rlwy.net:19974/railway`), all duplicates killed, exactly one watcher +
+     one bot run locally against Railway. Single source of truth = Railway DB.
+
+**41. Fixed the watcher "hang" (feed + Gemini timeouts).**
+   - `ingest_rss.py`: `feedparser.parse()` had no timeout — a slow/blackholed feed wedged
+     `run_ingestion()` forever. Now fetches bytes via `urllib` with a bounded
+     `FEED_FETCH_TIMEOUT` (20s default) and a **browser User-Agent** (Nepali CDNs reject the
+     default UA with 403). Unblocked 5 more feeds.
+   - `backfill_category.py`: `classify_via_gemini` had no timeout — a hung/429 Gemini call
+     blocked classification (and the whole watcher). Now runs in a daemon thread bounded by
+     `GEMINI_CALL_TIMEOUT_SECONDS` (12s) and **fails soft immediately on 429** instead of
+     sleeping through retry backoff.
+
+**42. Gemini multi-key rotation + pacing (the reason posts get drafted again).**
+   - `gemini_keys.py` (new): owns a comma-separated `GEMINI_API_KEYS` list (falls back to
+     `GEMINI_API_KEY`), rotates to the next key on 429, and **paces** requests per-key
+     (`pace()`, `GEMINI_RPM_PER_KEY` default 8/min) to stay under the free tier's per-minute
+     cap. All four Gemini client sites (embeddings, generate_posts, backfill_category, main.py)
+     delegate here.
+   - `generate_posts.py`: tries `gemini-3.5-flash-lite` FIRST (measured ~15+ RPM, 500/day)
+     and falls back to `gemini-3.6-flash` (only ~20/day, very low RPM) for quality. **This is
+     what made the pipeline draft posts again after days of 0.**
+   - User added **5 Gemini keys from different Google accounts** (`.env` `GEMINI_API_KEYS`).
+
+**43. `telegram_bot.py` single-instance lock.**
+   - The venv python spawns a base-python child and BOTH ran the script → two `getUpdates`
+     pollers conflicted (`telegram.error.Conflict`). Added a PID-file lock
+     (`telegram_bot.lock`) so only the first process polls; the other exits.
+
+**44. Root `/` now redirects to the `/web` frontend; `/health` added.**
+   - The bare domain returned API JSON. Now `GET /` 307-redirects to `/web` (the news
+     homepage); the old health JSON moved to `GET /health`.
+
+**45. Permanent image guarantee (FB + IG both fully publishing).**
+   - Root cause: IG requires a **public `image_url`** (rejects multipart file uploads:
+     `#100 image_url required`), and every free third-party image host blocks automated
+     uploads. Source CDN images were 403 (Ratopati hotlink-protected) / 404 (BBC expired) or
+     wrong aspect ratio (IG 36003).
+   - `images.py` (new): downloads source image (browser UA), verifies it's a real image,
+     normalizes to a **1080×1080 IG-square**; falls back to a **branded "Fact Line NP"
+     placeholder** with the post title (Nirmala UI font renders Devanagari on Windows).
+   - `Post.image_data` (bytea) stores the normalized JPEG in the **Railway Postgres**
+     (persistent, survives Railway restarts).
+   - `GET /post_image/{post_id}.jpg` (main.py) serves the bytes publicly — the stable URL
+     IG/FB/website/Telegram all use. Requires `SITE_BASE_URL` (in `.env`) for absolute URLs.
+   - `publisher.py`: `post_to_instagram` acquires+stores the guaranteed image, passes the
+     absolute `/post_image/{id}.jpg` URL to IG. Also **sweeps pending FB/IG rows on
+     `published` posts** (legacy posts whose rows never completed). FB falls back to
+     text-only when an image isn't fetchable.
+   - `backfill_post_images.py` (new): fixed all ~30 stuck rows (store image + reset to pending).
+   - **Verified live:** 49 published posts; **49 FB + 49 IG published, zero failed.** Only 4
+     pending each remain, all on rejected posts (correctly unpublished).
+
+### Verification performed (2026-08-09/10 cont.)
+- `py_compile` passes on all touched files.
+- Rotation/pacing unit tests pass; all 5 Gemini keys verified (4 working, 1 exhausted).
+- `/post_image/53.jpg` returns 200 image/jpeg locally AND on Railway (public).
+- Live publishes confirmed on FB (up to post 54) and IG (up to post 54).
+
 ---
 
 ## Small Changes Log
@@ -731,51 +808,64 @@ the blocker below is resolved or the hard rules change, update `RESUME.md` too.
   (`FEED_FETCH_TIMEOUT`, default 20s) and hand the stream to feedparser; a failed/blackholed
   feed is logged and skipped instead of wedging `run_ingestion()`.
 - `backfill_category.py` — `classify_via_gemini` now runs the Gemini call in a daemon thread
-  bounded by `GEMINI_CALL_TIMEOUT_SECONDS` (30s); a hung/rate-limited API fails soft instead
-  of blocking classification (and thus the watcher) forever.
+  bounded by `GEMINI_CALL_TIMEOUT_SECONDS` (12s); a hung/rate-limited API fails soft instead
+  of blocking classification (and thus the watcher) forever; on 429 it rotates keys first.
+- `gemini_keys.py` — created: multi-key rotation (`GEMINI_API_KEYS` comma-separated, falls back
+  to `GEMINI_API_KEY`), `rotate()` on 429, `pace()` per-key token bucket
+  (`GEMINI_RPM_PER_KEY`, default 8/min), `sleep_on_429()`, `is_rate_limit()`.
+- `generate_posts.py` — `call_gemini_for_cluster` tries `gemini-3.5-flash-lite` first (high RPM)
+  then `gemini-3.6-flash`; paces + rotates on 429.
+- `embeddings.py`, `backfill_category.py`, `main.py` — all delegate to `gemini_keys` + call
+  `pace()` before each Gemini call; rotate on 429.
+- `telegram_bot.py` — single-instance PID lock (`telegram_bot.lock`) so the venv parent + base
+  child don't both poll (getUpdates conflict).
+- `main.py` — root `/` 307-redirects to `/web`; added `GET /health`; added
+  `GET /post_image/{post_id}.jpg` (serves `Post.image_data` bytes publicly).
+- `images.py` — created: `acquire_post_image()` (download+normalize source or branded
+  placeholder → JPEG bytes), `make_placeholder()`, `public_image_url()`, `fetch_bytes()`,
+  `_normalize_to_square()`.
+- `models.py` — added `Post.image_data` (`LargeBinary`/bytea, nullable).
+- `migrate_post_image_data.py` — created: idempotent `posts.image_data` migration.
+- `backfill_post_images.py` — created: acquire+store images for stuck posts, reset IG/FB rows.
+- `publisher.py` — `post_to_instagram` acquires+stores the guaranteed image and passes the
+  absolute `/post_image/{id}.jpg` URL; `run_publisher` sweeps pending FB/IG rows on both
+  `approved` AND `published` posts; FB falls back to text-only when image isn't fetchable.
+- `ingest_rss.py` — added browser User-Agent to the feed fetch (Nepali CDNs 403 the default UA);
+  corrected Himalayan Times feed URL to `/rss`; marked Nepali Times feed unverified (dead).
+- `.env` — added `SITE_BASE_URL=https://web-production-a8dc3.up.railway.app`;
+  `GEMINI_API_KEYS` now has 5 keys.
+- `requirements.txt` — added `pillow==12.3.0`.
+- `news-engine-watcher.bat` (Startup folder) — now also starts the local website (uvicorn 8002);
+  idempotent (only starts processes not already running).
 
 ---
 
 ## What's Next
-*(priority order — items 1–6 completed 2026-08-06/07)*
+*(Everything below this line is the CURRENT outstanding work, in priority order.
+The complete feature list that is already DONE is in "What's Done" #38 onward plus the
+2026-08-09/10 sessions — see "What's Done" and the Key Decisions section.)*
 
-1. ~~Telegram bot setup~~ ✅ Done
-2. ~~End-to-end approval test~~ ✅ Done
-3. ~~Run `ingest.py` and verify new rows~~ ✅ Done
-4. ~~Optional: nullable region/category in bot messages~~ ✅ Done
-5. ~~Optional: audit `requirements.txt`~~ ✅ Done
-6. ~~FB/IG publisher — Meta credentials + live test~~ ✅ Done
-7. ~~Attach images to posts 1, 4, 5~~ ✅ Done — OG images harvested + `image_source_credit` set;
-   IG publish now blocked only by the (deferred) FB token.
-8. ~~Data retention/cleanup~~ ✅ Done — `retention.py` + wired into watcher (What's Done #32).
-8. ~~Build website publisher / viewer~~ ✅ Done — `GET /web` + article pages live at `localhost:8000/web`
-9. ~~Build admin CMS~~ ✅ Done — `/admin` login + full CRUD. Log in at `/admin/login`.
-   Credentials come from `ADMIN_USERNAME`/`ADMIN_PASSWORD`/`ADMIN_EMAIL` in `.env`
-   (the app **refuses to start** without them — no default password exists in source).
-10. ~~Admin CMS security hardening~~ ✅ Done — PBKDF2 password hashing, DB-backed sessions,
-    required admin env vars, rate-limited login + admin POSTs. See What's Done #30.
-11. ~~Pin `starlette`~~ ✅ Done — `fastapi==0.141.1`, `starlette==1.3.1` in requirements.txt.
-12. ~~Move admin sessions out of the in-memory dict~~ ✅ Done — `AdminSession` DB table;
-    verified a cookie set by one process is honored by a fresh one.
-13. **FACEBOOK PAGE TOKEN — WORKING (re-verified 2026-08-09).** A live publish succeeded
-    (Post 25 → `101313689402371_1028399360033436`), so the token on the local `.env` is
-    valid. If it ever expires again, regenerate via Meta (App `961662956934562`).
-14. ~~**Deploy to public server**~~ ✅ LIVE — `https://web-production-a8dc3.up.railway.app`,
-    repo `github.com/CodeToAI-Studio/fact-line-np` (branch `master`, public). Full
-    details in What's Done #38 (config, runtime hardening, data migration) and #39.
-15. **RULE / current architecture (updated 2026-08-09): Railway is paid-only for new
-    services, so the bot + watcher CANNOT be co-hosted on Railway.** Instead the local
-    `watch_pipeline.py` + `telegram_bot.py` run against the **Railway DB** (`.env`
-    `DATABASE_URL` = `hayabusa.proxy.rlwy.net:19974/railway`) — the same DB the live site
-    serves. **Single source of truth = Railway DB.** Never run the pipeline against the
-    stale local `localhost:5433` copy, and never run two watchers/bots at once (double
-    publish risk). Exactly one of each should be running.
-16. **Deferred — WhatsApp approval.** Code is in the repo; revisit once deployed.
-17. **GEMINI_API_KEY is on a free-tier project and is 429 rate-limited** (`RESOURCE_EXHAUSTED`,
-    daily 500-request cap per project). **Multi-key rotation is now implemented** — `gemini_keys.py`
-    (`GEMINI_API_KEYS` comma-separated) auto-switches to the next key on 429 across all four
-    client sites. **Action:** add keys from additional Google accounts to `.env` to multiply
-    daily quota at zero cost. The pipeline fails soft on 429 (no crash/hang) and retries next cycle.
+1. **24/7 hosting for the pipeline (the biggest remaining gap).** The site is live on Railway,
+   but the watcher + Telegram bot run **only on the user's PC** (Railway is paid-only for new
+   services; user has NO credit card). Research concluded:
+   - **GitHub Actions cron** is the only card-free cloud option that can run the pipeline
+     (`watch_pipeline.py --once` on a schedule, e.g. every 15–30 min). Public repo = free
+     minutes, min interval 5 min. Would run even when the PC is off.
+   - Google/Oracle free VMs need a card. Render/Vercel/Cloudflare/HF Spaces can't run a
+     background loop. **Action (not yet built):** create `.github/workflows/pipeline.yml`
+     running `watch_pipeline.py --once` on a schedule + GitHub secrets for the .env values.
+     When doing this, STOP the local watcher to avoid double-ingest/publish (bot can stay local
+     or also move). The workflow file is disposable/portable — no lock-in.
+2. **Custom domain (optional).** Site runs on `https://web-production-a8dc3.up.railway.app`
+   (Railway subdomain). Buying `factlinenp.com` + pointing it at Railway would give a real
+   brand URL. Railway custom domains may be a paid feature.
+3. **Data backup / hygiene.** `news_db.dump` (2.9MB) sits untracked in the repo — decide whether
+   to commit it or set up a routine Railway DB backup (e.g. a cron that runs `pg_dump`).
+4. **Deferred — WhatsApp approval.** Code is in the repo (`whatsapp_bot.py`, `whatsapp_client.py`);
+   user chose Telegram. Revisit only if wanted.
+5. **Deferred — Threads/TikTok publishing.** Deliberately out of scope for launch (user decision).
+6. **Minor polish (as needed):** Streamlit UI is local-only; `news_db.dump` cleanup; any admin UX
+   tweaks. Not blockers.
 
 ---
 
@@ -810,10 +900,22 @@ the blocker below is resolved or the hard rules change, update `RESUME.md` too.
   platforms are unimplemented. Including them in the "is this post fully published?" check
   would mean `Post.status` never flips to `"published"`. Only the platforms the publisher
   actually handles count toward completion.
-- **Instagram skip ≠ failure.** `post_to_instagram` returns `None` (not `False`) when
-  `image_url` is absent. The caller leaves `PlatformPost.status = "pending"` so the post
-  retries automatically once an image is attached. A real API error returns `False` and
-  sets status to `"failed"`, which requires manual intervention to retry.
+- **Instagram always has an image (permanent guarantee).** `images.acquire_post_image()`
+  downloads + normalizes the source image (or generates a branded placeholder when none is
+  usable), stores the JPEG bytes on `Post.image_data`, and serves them from the public
+  `/post_image/{id}.jpg` route. IG gets an absolute `SITE_BASE_URL + /post_image/{id}.jpg`
+  URL — no more `None` skips, no 403/404, no aspect-ratio (36003) errors. (The old
+  "skip ≠ failure" behavior is superseded.)
+- **Gemini keys + pacing live in `gemini_keys.py`; all client sites delegate.** The free tier
+  limits both per-day (500) and per-minute, and `gemini-3.6-flash` has a very low RPM. Rotation
+  handles the daily axis; `pace()` handles the per-minute axis; `generate_posts` uses
+  lite-first order for drafting. This is why posts draft again.
+- **Single source of truth = Railway DB.** The pipeline (local watcher + bot) and the live site
+  both use `.env` `DATABASE_URL` = Railway Postgres. Never point the pipeline back at local
+  `localhost:5433`. Never run two watchers/bots (double-publish risk).
+- **The watcher + bot are intentionally local** (Railway is paid-only for new services; user has
+  no card). The site stays on Railway 24/7; the pipeline runs while the PC is on. GitHub
+  Actions cron is the researched card-free option for true 24/7 (see What's Next #1).
 - **Admin passwords are PBKDF2, never a fast hash.** `sha256(password+salt)` is GPU-crackable;
   the admin panel now uses `hashlib.pbkdf2_hmac` (600k iters). Stored as
   `salt$iterations$hash` so the iteration count can be raised later without a schema change.
@@ -831,24 +933,29 @@ the blocker below is resolved or the hard rules change, update `RESUME.md` too.
 
 ## Open Questions / Blockers
 
-1. **`FACEBOOK_PAGE_ACCESS_TOKEN` — WORKING (re-verified 2026-08-09).** Live publish
-   succeeded (Post 25). If it expires again, regenerate at https://developers.facebook.com
-   against App `961662956934562`.
-2. **`GEMINI_API_KEY` is on a free-tier project — 429 rate-limited.** Confirmed live
-   2026-08-09 (500 req/day per project). Mitigation in place: `gemini_keys.py` multi-key
-   rotation (`GEMINI_API_KEYS`) spreads requests across Google accounts. **Action for user:**
-   generate keys from additional Google accounts and add them comma-separated to `.env`.
-   To fully remove the cap, enable billing on the Gemini project (that also unlocks
-   `/synthesize` on the live site).
+1. **`FACEBOOK_PAGE_ACCESS_TOKEN` — WORKING (re-verified 2026-08-09/10).** Live publishes
+   succeeded (posts published to FB up to id 54). If it expires again, regenerate at
+   https://developers.facebook.com against App `961662956934562`. Token is in the **local**
+   `.env`; also set on Railway if the server should self-publish.
+2. **`GEMINI_API_KEY` free-tier quota — mitigated, not eliminated.** The key(s) are on
+   free-tier projects (500 req/day per project). Mitigation: `gemini_keys.py` rotates across
+   **5 keys** (`GEMINI_API_KEYS`) + paces per-key (`GEMINI_RPM_PER_KEY`, default 8/min) +
+   `generate_posts` uses lite-first model order. **This is why the pipeline drafts again.**
+   To fully remove the cap, enable billing on a Gemini project (also unlocks `/synthesize`
+   for the live site, which shares the same quota). Watch for the daily reset — the pipeline
+   fails soft on 429 and retries next cycle.
 3. **Who populated `region` for the existing 240 rows?** Not `ingest.py` (confirmed by
    inspection) and there is no `backfill_region.py`. Likely manual SQL or a deleted script.
-   Harmless now that ingestion is set explicitly, but worth knowing if the values look wrong.
-4. **Admin session cookie has no `secure` flag.** It is `SameSite=lax` + HttpOnly, which is
-   right, but it may be served over plain HTTP in local dev. Enable `Secure` once deployed
-   behind HTTPS (Railway/domain) — a future hardening item.
+   Harmless now that ingestion sets region explicitly. Values are lowercase
+   (`nepal`/`international`).
+4. **Admin session cookie `secure` flag.** It is `SameSite=lax` + HttpOnly. `secure=` is set
+   when the request scheme is HTTPS (Railway/prod) — already handled in `main.py`. Confirm on
+   a fresh deploy if a custom domain is added.
+5. **24/7 pipeline hosting is the open decision** — see What's Next #1 (GitHub Actions vs
+   waiting for a card for a free VM). Not a code blocker; the operation runs while the PC is on.
 
-*(WhatsApp template name, language code, and Meta approval status were blockers for the
-WhatsApp flow — deferred along with that feature. See What's Next #15.)*
+*(WhatsApp template + Meta approval were blockers for the WhatsApp flow — deferred along with
+that feature. See What's Next #4.)*
 
 ---
 
