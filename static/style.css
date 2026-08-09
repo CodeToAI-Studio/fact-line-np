@@ -48,6 +48,8 @@ img { max-width: 100%; display: block; }
 .header-inner { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .site-logo { display: flex; align-items: center; gap: 10px; color: white; }
 .logo-mark { width: 42px; height: 42px; background: white; color: var(--fl-red); font-family: var(--font-head); font-weight: 700; font-size: .9rem; display: flex; align-items: center; justify-content: center; border-radius: 50%; flex-shrink: 0; letter-spacing: -1px; }
+.logo-img { width: 44px; height: 44px; border-radius: 50%; object-fit: cover; flex-shrink: 0; }
+.logo-img-footer { width: 52px; height: 52px; }
 .logo-text { font-family: var(--font-head); font-weight: 700; font-size: 1.55rem; letter-spacing: 2px; text-transform: uppercase; line-height: 1; }
 .logo-np { color: var(--fl-navy); margin-left: 3px; }
 .logo-tagline { font-size: .65rem; letter-spacing: 1px; opacity: .8; text-transform: uppercase; margin-top: 1px; }

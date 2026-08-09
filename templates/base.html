@@ -9,7 +9,7 @@
   {% if og_image %}<meta property="og:image" content="{{ og_image }}"/>{% endif %}
   <meta name="twitter:card" content="summary_large_image"/>
   <title>{% block title %}Fact Line NP{% endblock %}</title>
-  <link rel="icon" href="/static/logo-circle.png"/>
+  <link rel="icon" href="/static/logo.png"/>
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
   <link rel="stylesheet" href="/static/style.css"/>
@@ -31,7 +31,7 @@
   <div class="container">
     <div class="header-inner">
       <a href="/web" class="site-logo">
-        <div class="logo-mark">FL</div>
+        <img src="/static/logo.png" alt="Fact Line NP logo" class="logo-img">
         <div>
           <div class="logo-text">FACT LINE<span class="logo-np">NP</span></div>
           <div class="logo-tagline">{{ site_tagline }}</div>
@@ -90,7 +90,7 @@
   <div class="footer-top">
     <div class="footer-brand">
       <a href="/web" class="site-logo" style="margin-bottom:12px">
-        <div class="logo-mark">FL</div>
+        <img src="/static/logo.png" alt="Fact Line NP logo" class="logo-img logo-img-footer">
         <div class="logo-text">FACT LINE<span class="logo-np">NP</span></div>
       </a>
       <p>{{ footer_about }}</p>
