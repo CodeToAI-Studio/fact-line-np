@@ -162,6 +162,21 @@ async def get_chat_id_mode():
     print(f"Add this to your .env as: TELEGRAM_CHAT_ID={chat_id}")
 
 
+# Single-instance lock: the venv python.exe spawns a base-python child, and
+# BOTH run this script — two getUpdates pollers on one token conflict and
+# Telegram kills one. A PID-file lock means only the first process to grab it
+# polls; the second exits immediately. (The lock is released on clean exit.)
+def _acquire_single_instance_lock() -> bool:
+    lock_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "telegram_bot.lock")
+    try:
+        fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        os.write(fd, str(os.getpid()).encode())
+        os.close(fd)
+        return True
+    except FileExistsError:
+        return False
+
+
 def main():
     if "--get-chat-id" in sys.argv:
         if not TELEGRAM_BOT_TOKEN:
@@ -174,12 +189,22 @@ def main():
         print("Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in your .env first.")
         return
 
+    if not _acquire_single_instance_lock():
+        print("Another telegram_bot instance is already running (lock held) — exiting.", file=sys.stderr)
+        return
+
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     app.add_handler(CallbackQueryHandler(handle_button))
     app.job_queue.run_repeating(send_pending_posts, interval=CHECK_INTERVAL_SECONDS, first=0)
 
     print(f"Bot running -- checking for new pending posts every {CHECK_INTERVAL_SECONDS}s. Ctrl+C to stop.")
-    app.run_polling()
+    try:
+        app.run_polling()
+    finally:
+        try:
+            os.remove(os.path.join(os.path.dirname(os.path.abspath(__file__)), "telegram_bot.lock"))
+        except OSError:
+            pass
 
 
 if __name__ == "__main__":
