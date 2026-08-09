@@ -7,7 +7,7 @@ file. Read it top to bottom before touching code.
 Every created/edited/deleted file goes in either "What's Done" (with reasoning) or
 "Small Changes Log" (one line). Keep "What's Next" reordered by priority.
 
-**Last updated:** 2026-08-09 (cont. 2) — deploy-readiness audit + restarted watcher/bot
+**Last updated:** 2026-08-09 (cont. 3) — LIVE on Railway + data migrated; FB token refresh next
 
 ---
 
@@ -613,6 +613,43 @@ the blocker below is resolved or the hard rules change, update `RESUME.md` too.
 - TestClient (lifespan + admin auth): login 303; `/admin/posts`, `/admin`, `/admin/posts/4`
   all 200 with the Views column/label rendered.
 
+### Session 2026-08-09 (cont.) — LIVE DEPLOY (Railway)
+
+**38. Deployed Fact Line NP to Railway — site is live at `https://web-production-a8dc3.up.railway.app`.**
+   - *Repo:* `github.com/CodeToAI-Studio/fact-line-np` (public, branch `master`, `.env`
+     confirmed untracked; `gh` CLI installed at `~/bin/gh`).
+   - *References used:* credentials in the user's local `.env` (user full control).
+   - *Config:* added `railway.json` (Nixpacks build, `uvicorn main:app --host 0.0.0.0
+     --port $PORT`, `/` healthcheck, restart-on-failure) + `Railway.md` deploy guide.
+   - *Runtime hardening (the healthcheck-failure lesson):* `models.py` engine now uses
+     `pool_pre_ping=True` and `connect_args={"connect_timeout": 10}` (unreachable DB fails
+     ~10s, no infinite hang); `main.py` lifespan DB bootstrap wrapped in try/except that
+     logs `Database bootstrap FAILED: ...` then re-raises to crash the process and let the
+     platform restart. First deploy failed the `/` healthcheck because `DATABASE_URL` wasn't
+     shared into the Web service.
+   - *Data migration:* local `news_db` (Postgres 16 at `/c/Program Files/PostgreSQL/16/`)
+     dumped to `news_db.dump` (2.9 MB) with `pg_dump -F c`; restored into Railway Postgres
+     via `railway connect postgres` SSH tunnel (Railway CLI 5.35.0 at `~/bin/railway`,
+     ed25519 key registered) with `pg_restore --no-owner --no-privileges --clean`. Row
+     counts confirmed: 637 articles / 22 posts / 110 platform_posts / 15 settings /
+     1 admin.
+   - *Verified live:* `/` 200; `/web` 200 (Fact Line NP title, 21 post links);
+     `/web/post/9` 200 rendering the real Nepali story; `/posts` returns restored rows;
+     `/web/about`, `/admin/login`, `/static/style.css` all 200.
+   - **LESSON (SSH tunnel):** `railway connect postgres` needs an SSH key. First attempt
+     failed with `No SSH keys found` (fixed: `ssh-keygen -t ed25519` + `railway ssh keys
+     add`), and the *first* tunnel session flaked with `cannot verify key` + `channel 1:
+     open failed: unknown channel type: unsupported` → `pg_restore` errored. A fresh
+     tunnel on a new port worked. On flaky tunnels: kill and retry.
+
+**39. Local watcher/bot status after deploy.**
+   - The deployed Railway DB now holds the real data, but `watch_pipeline.py` + the Telegram
+     bot still run locally against the old local DB (which still has the same data). They
+     keep the *local* copy alive and approved-posts continue to work against it.
+   - Hiatus: at the very end of the migrate, the background (g) running `railway connect
+     postgres --tunnel-only` may or may not still be alive — see next step; if it's dead,
+     the next Railway CLI operation re-links automatically.
+
 ---
 
 ## Small Changes Log
@@ -712,19 +749,19 @@ the blocker below is resolved or the hard rules change, update `RESUME.md` too.
 11. ~~Pin `starlette`~~ ✅ Done — `fastapi==0.141.1`, `starlette==1.3.1` in requirements.txt.
 12. ~~Move admin sessions out of the in-memory dict~~ ✅ Done — `AdminSession` DB table;
     verified a cookie set by one process is honored by a fresh one.
-13. **REFRESH `FACEBOOK_PAGE_ACCESS_TOKEN` — CRITICAL, already expired 2026-08-07.**
-    `publisher.py` 400s on every new post. Regenerate via Meta (App `961662956934562`).
-14. **DEPLOY IN PROGRESS — GitHub pushed; Railway next.**
-    - `fact-line-np` created at `github.com/CodeToAI-Studio/fact-line-np` (public, branch
-      `master`, `.env` confirmed not tracked), pushed from this working copy.
-    - `railway.json` (Nixpacks build, `uvicorn main:app --host 0.0.0.0 --port $PORT`,
-      `/` healthcheck) + `Railway.md` guide added are committed.
-    - Remaining (user, in browser): create Railway project from the repo, add
-      PostgreSQL, set env vars (`GEMINI_API_KEY`, `ADMIN_*`; Railway injects
-      `DATABASE_URL`), then deploy. See `Railway.md`.
-    - After deploy: verify `/web`, migrate local Postgres data if desired
-      (Postgres 16 is at `/c/Program Files/PostgreSQL/16/`; also has Docker).
-15. **Deferred — WhatsApp approval.** Code is in the repo; revisit once deployed.
+13. **REFRESH `FACEBOOK_PAGE_ACCESS_TOKEN` — CRITICAL, still expired 2026-08-07.**
+    The publisher (local watcher) still 400s on every new post. Regenerate via Meta
+    (App `961662956934562`); update the **local** `.env` (and Railway vars if you want the
+    server to self-publish too). See the "Deploy" note below for the important caveat.
+14. ~~**Deploy to public server**~~ ✅ LIVE — `https://web-production-a8dc3.up.railway.app`,
+    repo `github.com/CodeToAI-Studio/fact-line-np` (branch `master`, public). Full
+    details in What's Done #38 (config, runtime hardening, data migration) and #39.
+15. **RULE / caveat: the deployed Web service now faces the Railway DB and is the live site.
+    Do NOT run the local `watch_pipeline.py`/`generate_posts.py`/Telegram bot against the
+    Railway DB — they'd double-publish.** Keep the local pipeline pointed at the local DB
+    (its own copy) if desired; for a single source of truth, re-point it at Railway and
+    stop local — but never run both.
+16. **Deferred — WhatsApp approval.** Code is in the repo; revisit once deployed.
 
 ---
 
