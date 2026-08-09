@@ -22,10 +22,26 @@ when you attach your Railway Project to the repo.)
    needed).
 4. Go to the Deploy service → **Variables** and add everything below.
 
-> **SMOKE TEST:** watch the deploy log; the first boot must **fail loudly** if
-> `ADMIN_*` aren't set yet (the app refuses to start without them). That's
-> correct behaviour, not a bug — add the vars, and it starts. This is the
-> same safety check that runs locally.
+> **SMOKE TEST:** the first boot must **fail loudly** if `ADMIN_*` aren't set yet —
+> the app refuses to start, the container crashes, and Railway auto-restarts once
+> vars are added. That's deliberate (no default password), not a bug.
+
+### If the healthcheck fails (Deploy → Healthcheck failure)
+Almost always one of two things. Work through both:
+
+1. **Postgres not reachable from the Web service.**
+   Railway Postgres ships in a *separate service* from your Web service. The
+   Web service needs `DATABASE_URL` (and `DATABASE_URL` only) **shared** into it,
+   or the app can't see the DB at all — and it now boots to a loud DB fail-fast:
+   - Open your **Postgres** service → **Variables** → find `DATABASE_URL` →
+     click **"SQL" / "Services"** → **Share with** the Web service (or set the
+     Web service's own `DATABASE_URL = ${{Postgres.DATABASE_URL}}`).
+   - The logs will now show `Database bootstrap FAILED:` with the real reason.
+2. **`ADMIN_*` missing.** The app raises `RuntimeError` — visible in Deploy logs.
+
+**After fixing, click Deploy again** (the healthcheck is only run at boot).
+New code is already pushed (fail-fast, so the reason is in the logs), but the
+config was the actual cause before — either fix forces a clean redeploy.
 
 ## 3. Required environment variables
 | Variable | Value |
