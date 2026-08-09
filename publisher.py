@@ -230,12 +230,15 @@ def run_publisher(dry_run: bool = False):
     """
     db = SessionLocal()
     try:
-        # Find all PlatformPost rows that are pending for fb/ig under approved posts
+        # Find all PlatformPost rows that are pending for fb/ig under approved
+        # OR already-published posts. The "published" case covers legacy posts
+        # that flipped to published before their FB/IG rows completed (e.g. the
+        # image-URL failures); their pending rows still need a final push.
         stmt = (
             select(PlatformPost)
             .join(Post)
             .where(
-                Post.status == "approved",
+                Post.status.in_(["approved", "published"]),
                 PlatformPost.status == "pending",
                 PlatformPost.platform.in_(["facebook", "instagram"]),
             )
