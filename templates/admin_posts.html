@@ -37,6 +37,7 @@
                     <th>Region</th>
                     <th>Category</th>
                     <th>Status</th>
+                    <th>Views</th>
                     <th>Published</th>
                     <th>Created</th>
                     <th>Actions</th>
@@ -61,6 +62,7 @@
                         <span class="badge badge-danger">Rejected</span>
                         {% endif %}
                     </td>
+                    <td>{{ post.view_count }}</td>
                     <td>
                         {% set platform_count = post.platform_posts|length if post.platform_posts else 0 %}
                         {% set published_count = post.platform_posts|selectattr('status', 'equalto', 'published')|list|length if post.platform_posts else 0 %}

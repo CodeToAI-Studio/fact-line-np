@@ -7,7 +7,7 @@ file. Read it top to bottom before touching code.
 Every created/edited/deleted file goes in either "What's Done" (with reasoning) or
 "Small Changes Log" (one line). Keep "What's Next" reordered by priority.
 
-**Last updated:** 2026-08-09
+**Last updated:** 2026-08-09 (cont.) — real view counts built
 
 ---
 
@@ -542,6 +542,48 @@ the blocker below is resolved or the hard rules change, update `RESUME.md` too.
    live: `/`, `/web`, `/web/latest`, `/web/about`, `/web/post/9`, `/web/search?q=nepal`,
    `/admin/login` all return 200 with real data.
 
+### Session 2026-08-09 (cont.) — real view counts (homepage redesign handoff)
+
+**35. Built a real view-count system; rewrote `/web/popular` + site sidebars as "Most Read".**
+   Pre-existing state: the uncommitted homepage redesign added a **Most Popular** nav link →
+   `/web/popular`, but that page was `/web/latest` with a new title — it ordered by
+   `created_at.desc()` and claimed "Most-read stories right now" with no counter to back it.
+   `_recent_posts` (main.py) was documented as a *recency proxy* pending a real counter.
+   - *Schema:* added `Post.view_count` (`Integer`, default/`server_default` 0, non-null) in
+     `models.py`. New idempotent `migrate_view_count.py` (probes `information_schema.columns`,
+     then `ALTER TABLE posts ADD COLUMN view_count INTEGER NOT NULL DEFAULT 0`) — matches the
+     repo's established `migrate_*.py` pattern. Run manually; re-run is a no-op.
+   - *Counting (dedupe per browser session):* `web_post` increments only when (a) the post is
+     `published` and (b) its id isn't already in the `flnp_viewed` cookie (comma-separated ids,
+     HTTP-only, 30-day, capped at last 200). The 404 path returns before any write, so the cookie
+     is only ever set on a real article render. This route is a sync `def` (runs in FastAPI's
+     threadpool), so the blocking write is safe.
+   - *Ranking:* `_recent_posts` → renamed `_most_read` (order by `view_count desc,
+     created_at desc`); used by the homepage + article-page sidebars and by `/web/popular`
+     (limit 30, same ordering). Tie-break is newest-first.
+   - **Numbers are admin-only** (user decision): readers see ranked lists, never a count. The
+     number renders only in `/admin/posts`, `/admin` dashboard (Recent Posts), and
+     `/admin/posts/{id}` (edit page). No public template references `view_count` (verified by
+     grep). `_p()` exposes `"view_count"` for admin use; public templates simply don't render it.
+   - **Labels:** homepage sidebar `"Recent Stories"` → `"Most Read"` and article sidebar
+     `"Latest Stories"` → `"Most Read"` (index.html, post.html) now that the list is real.
+   - Classic `--reload` gotcha: verification initially "failed" (no cookie/count) because the
+     process on 8002 was serving **without** `--reload` — it was running pre-edit code. Restarted
+     the server on the new code; everything then worked. Same lesson as #28: confirm the running
+     process actually reloaded before judging a route change.
+
+### Verification performed (2026-08-09 cont.)
+- `py_compile main.py models.py migrate_view_count.py` passes.
+- Migration applied; re-run reports "already exists".
+- Live curl: fresh session on `/web/post/4` → `Set-Cookie: flnp_viewed=4`, DB `view_count` 1;
+  re-visit same cookie → still 1; new session → 2. Fresh-session visits drove post 4 to 4
+  (4 separate curl sessions = 4 distinct sessions) — session-dedupe proven.
+- `/web/popular` ranks `[5,4,9,8,7]` — the two viewed posts first, tie-break newest.
+- Homepage/`/web/popular`/article HTML contain no `view_count` / raw count (only sidebar rank
+  numbers like `mr-num top 1`).
+- TestClient (lifespan + admin auth): login 303; `/admin/posts`, `/admin`, `/admin/posts/4`
+  all 200 with the Views column/label rendered.
+
 ---
 
 ## Small Changes Log
@@ -607,6 +649,16 @@ the blocker below is resolved or the hard rules change, update `RESUME.md` too.
 - `watch_pipeline.py` — added step 4 (retention sweep) + updated docstring.
 - `main.py` — admin session cookie `secure=` keyed to HTTPS scheme (login + logout).
 - *(data)* posts 1, 4, 5 — `image_url` + `image_source_credit` set from source-article OG images.
+- `models.py` — added `Post.view_count` (`Integer`, default 0, server_default "0").
+- `migrate_view_count.py` — created: idempotent migration for `posts.view_count`.
+- `main.py` — `web_post` increments `view_count` once per session per published post (via `flnp_viewed`
+  cookie, HTTP-only, 30 days, capped 200 ids); `_recent_posts` renamed `_most_read` (view-ordered);
+  `web_popular` + both sidebars rank by views; `_p()` exposes `"view_count"`; admin dashboard
+  `recent_posts` includes `view_count`.
+- `templates/admin_posts.html`, `admin_dashboard.html` — added `Views` column.
+- `templates/admin_post_edit.html` — added `Views:` line in Publication Status card.
+- `templates/index.html`, `templates/post.html` — sidebar labels `Recent Stories`/`Latest Stories`
+  → `Most Read` (list is now view-ranked; count still admin-only).
 
 ---
 

@@ -61,6 +61,12 @@ class Post(Base):
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
+    # Page views on the public article page (/web/post/{id}). Incremented once per
+    # browser session per post (deduped via the flnp_viewed cookie). Drives the
+    # /web/popular page and the "Most Read" sidebars; the number itself is shown
+    # only to admins, never rendered in public templates.
+    view_count = Column(Integer, default=0, server_default="0", nullable=False)
+
     platform_posts = relationship(
         "PlatformPost", back_populates="post", cascade="all, delete-orphan"
     )

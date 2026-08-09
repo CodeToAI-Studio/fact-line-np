@@ -99,9 +99,9 @@ img { max-width: 100%; display: block; }
 .meta-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
 .meta-time { font-size: .72rem; color: var(--text-muted); }
 
-/* HERO GRID */
-.hero-grid { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: auto auto; gap: 12px; margin-bottom: 28px; }
-.hero-lead { grid-column: 1; grid-row: 1 / 3; position: relative; border-radius: var(--radius-lg); overflow: hidden; box-shadow: var(--shadow-md); }
+/* HERO GRID — 1 dominant lead (left, spans tall) + secondaries stacked on the right */
+.hero-grid { display: grid; grid-template-columns: minmax(0, 2fr) 1fr; grid-template-rows: repeat(3, auto); gap: 12px; margin-bottom: 28px; }
+.hero-lead { grid-column: 1; grid-row: 1 / 4; position: relative; border-radius: var(--radius-lg); overflow: hidden; box-shadow: var(--shadow-md); }
 .hero-lead img { width: 100%; height: 100%; min-height: 360px; object-fit: cover; }
 .hero-overlay { position: absolute; bottom: 0; left: 0; right: 0; background: linear-gradient(transparent 0%, rgba(0,0,0,.75) 50%, rgba(0,0,0,.92) 100%); padding: 32px 16px 16px; }
 .hero-title { font-family: var(--font-head); font-size: 1.45rem; font-weight: 700; line-height: 1.25; color: white; margin-top: 6px; display: block; }
@@ -138,7 +138,8 @@ img { max-width: 100%; display: block; }
 .latest-item { display: flex; align-items: flex-start; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--border); }
 .latest-item:last-child { border-bottom: none; }
 .latest-num { font-family: var(--font-head); font-size: 1.2rem; font-weight: 700; color: var(--border); min-width: 28px; line-height: 1; padding-top: 2px; }
-.latest-item:first-child .latest-num { color: var(--fl-red); }
+.latest-item:first-child .latest-num, .latest-num.top { color: var(--fl-red); }
+.byline { font-size: .72rem; color: var(--text-muted); }
 .latest-body { flex: 1; }
 .latest-title { font-family: var(--font-head); font-size: .9rem; font-weight: 700; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .latest-title:hover { color: var(--fl-red); }

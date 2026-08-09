@@ -10,7 +10,7 @@
   <div class="two-col">
     <div>
       {% if posts %}
-      <div class="card-grid card-grid-2">
+      <div class="card-grid {{ 'card-grid-4' if posts|length >= 4 else 'card-grid-2' }}">
         {% for post in posts %}
         <a href="/web/post/{{ post.id }}" class="card">
           {% if post.image_url %}<img src="{{ post.image_url }}" alt="" loading="lazy"/>

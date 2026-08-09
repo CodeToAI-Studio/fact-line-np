@@ -41,6 +41,7 @@
                     <th>Language</th>
                     <th>Region</th>
                     <th>Status</th>
+                    <th>Views</th>
                     <th>Created</th>
                     <th>Actions</th>
                 </tr>
@@ -63,6 +64,7 @@
                         <span class="badge badge-danger">Rejected</span>
                         {% endif %}
                     </td>
+                    <td>{{ post.view_count }}</td>
                     <td>{{ post.created_at.strftime('%Y-%m-%d %H:%M') if post.created_at else 'N/A' }}</td>
                     <td>
                         <a href="/admin/posts/{{ post.id }}" class="btn btn-secondary btn-sm">Edit</a>

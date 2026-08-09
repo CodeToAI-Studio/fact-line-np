@@ -1,10 +1,10 @@
 {% extends "base.html" %}
-{% block title %}Fact Line NP — Nepal ko Vishwasaniya Samachar{% endblock %}
+{% block title %}Fact Line NP — Nepal News, Verified &amp; Explained{% endblock %}
 {% block content %}
 <div class="page-wrap">
 <div class="container">
 
-  {# HERO GRID #}
+  {# HERO — 1 dominant lead + stacked secondaries #}
   {% if hero_lead or hero_subs %}
   <div class="hero-grid">
     {% if hero_lead %}
@@ -15,7 +15,7 @@
         <span class="cat-badge {{ hero_lead.category or '' }}">{{ (hero_lead.category or 'news') | title }}</span>
         <div class="hero-title">{{ hero_lead.social_summary[:120] }}</div>
         <div class="hero-summary nepali">{{ hero_lead.social_summary[120:200] if hero_lead.social_summary|length > 120 }}</div>
-        <div class="meta-row" style="margin-top:8px"><span class="meta-time" style="color:rgba(255,255,255,.6)">{{ hero_lead.created_at[:10] if hero_lead.created_at }}</span></div>
+        <div class="meta-row" style="margin-top:8px"><span class="meta-time" style="color:rgba(255,255,255,.6)">{{ hero_lead.created_at[:16].replace('T',' ') if hero_lead.created_at }}</span></div>
       </div>
     </a>
     {% endif %}
@@ -26,7 +26,7 @@
       <div class="hero-sub-body">
         <span class="cat-badge {{ post.category or '' }}" style="font-size:.6rem">{{ (post.category or 'news') | title }}</span>
         <div class="hero-sub-title">{{ post.social_summary[:100] }}</div>
-        <div class="meta-time">{{ post.created_at[:10] if post.created_at }}</div>
+        <div class="meta-time">{{ post.created_at[:16].replace('T',' ') if post.created_at }}</div>
       </div>
     </a>
     {% endfor %}
@@ -36,44 +36,43 @@
   {# MAIN + SIDEBAR #}
   <div class="two-col">
     <div>
-      {# LATEST NEWS #}
+
+      {# LATEST UPDATES — numbered spine #}
+      {% if latest_posts %}
       <div class="section-block">
         <div class="section-hd">
-          <h2>Latest News</h2>
+          <h2>Latest Updates</h2>
           <a href="/web/latest" class="see-all">View all &rarr;</a>
         </div>
         {% for post in latest_posts %}
-        <div class="latest-img-item">
-          <a href="/web/post/{{ post.id }}">
-            {% if post.image_url %}<img src="{{ post.image_url }}" alt="" loading="lazy"/>
-            {% else %}<div class="img-placeholder" style="width:72px;min-width:72px;height:56px;border-radius:2px">📰</div>{% endif %}
-          </a>
-          <div>
+        <a href="/web/post/{{ post.id }}" class="latest-item">
+          <span class="latest-num {% if loop.index == 1 %}top{% endif %}">{{ loop.index }}</span>
+          <div class="latest-body">
             <span class="cat-badge {{ post.category or '' }}" style="font-size:.6rem">{{ (post.category or 'news') | title }}</span>
-            <a href="/web/post/{{ post.id }}" class="latest-title" style="display:block;margin-top:4px">{{ post.social_summary[:110] }}</a>
-            <div class="meta-time">{{ post.created_at[:10] if post.created_at }}</div>
+            <div class="latest-title {% if post.language == 'nepali' %}nepali{% endif %}">{{ post.social_summary[:110] }}</div>
+            <span class="meta-time">{{ post.created_at[:16].replace('T',' ') if post.created_at }}</span>
           </div>
-        </div>
-        {% else %}<p class="text-muted" style="padding:16px 0">No posts yet.</p>
+        </a>
         {% endfor %}
       </div>
-    </div>
+      {% endif %}
 
-      {# CATEGORY SECTIONS #}
+      {# CATEGORY SECTIONS — 4-card rows (or 2 if sparse) #}
       {% for section in category_sections %}
       <div class="section-block">
         <div class="section-hd">
           <h2>{{ section.name | title }}</h2>
           <a href="/web/category/{{ section.slug }}" class="see-all">View all &rarr;</a>
         </div>
-        <div class="card-grid">
+        <div class="card-grid {{ section.display }}">
           {% for post in section.posts %}
           <a href="/web/post/{{ post.id }}" class="card">
             {% if post.image_url %}<img src="{{ post.image_url }}" alt="" loading="lazy"/>
             {% else %}<div class="img-placeholder" style="height:170px">📰</div>{% endif %}
             <div class="card-body">
               <div class="card-title {% if post.language == 'nepali' %}nepali{% endif %}">{{ post.social_summary[:120] }}</div>
-              <div class="meta-row"><span class="meta-time">{{ post.created_at[:10] if post.created_at }}</span></div>
+              <div class="card-summary {% if post.language == 'nepali' %}nepali{% endif %}">{{ post.full_body[:90] }}{% if post.full_body|length > 90 %}…{% endif %}</div>
+              <div class="meta-row"><span class="meta-time">{{ post.created_at[:16].replace('T',' ') if post.created_at }}</span></div>
             </div>
           </a>
           {% endfor %}
@@ -90,7 +89,7 @@
           <a href="/web/post/{{ post.id }}" class="opinion-card">
             <div class="opinion-label">Opinion</div>
             <div class="opinion-title {% if post.language == 'nepali' %}nepali{% endif %}">{{ post.social_summary[:100] }}</div>
-            <div class="meta-time" style="margin-top:8px">{{ post.created_at[:10] if post.created_at }}</div>
+            <div class="meta-time" style="margin-top:8px">{{ post.created_at[:16].replace('T',' ') if post.created_at }}</div>
           </a>
           {% endfor %}
         </div>
@@ -115,7 +114,13 @@
         <a href="/web/category/{{ cat }}" style="display:block;padding:6px 0;font-size:.82rem;border-bottom:1px solid var(--border);color:var(--text-2)">{{ cat | title }}</a>
         {% endfor %}
       </div>
+      {% if ad_sidebar_code %}
+      <div class="sidebar-block" style="padding:0; box-shadow:none; background:transparent">
+        {{ ad_sidebar_code | safe }}
+      </div>
+      {% else %}
       <div class="ad-block">Advertisement</div>
+      {% endif %}
     </aside>
   </div>
 

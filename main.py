@@ -700,6 +700,7 @@ def _p(post):
         "image_source_credit": post.image_source_credit,
         "status": post.status,
         "created_at": post.created_at.isoformat() if post.created_at else None,
+        "view_count": getattr(post, "view_count", 0) or 0,
     }
 
 
@@ -711,11 +712,21 @@ def _all_categories(db):
     return [c for c in rows if c]
 
 
+# Category display order for the homepage. Unknown/other categories fall back to
+# alphabetical order after these. "opinion" is deliberately excluded here — it is
+# surfaced as its own strip rather than a card row.
+CATEGORY_ORDER = [
+    "politics", "economy", "business", "society",
+    "world", "sports", "technology", "entertainment", "nepal",
+]
+
+
 def _most_read(db, limit: int = 5):
-    """No view-count column yet — recency as proxy."""
+    """The 5 published posts with the most page views for the "Most Read"
+    sidebars. Numbers are admin-only; readers just see the ranked list."""
     rows = db.execute(
         select(Post).where(Post.status == "published")
-        .order_by(Post.created_at.desc()).limit(limit)
+        .order_by(Post.view_count.desc(), Post.created_at.desc()).limit(limit)
     ).scalars().all()
     return [_p(p) for p in rows]
 
@@ -756,22 +767,46 @@ def web_index(request: Request, db: Session = Depends(get_db)):
     ).scalars().all()
     post_dicts = [_p(p) for p in all_posts]
 
+    # Hero: 1 dominant lead (newest with an image) + up to 3 stacked secondaries.
     hero_lead = next((p for p in post_dicts if p["image_url"]), post_dicts[0] if post_dicts else None)
     remaining = [p for p in post_dicts if p is not hero_lead]
-    hero_subs = remaining[:4]
+    hero_subs = [p for p in remaining if p["image_url"]][:3]
 
-    cats = _all_categories(db)
+    # Category rows in the editorial order; 3-4 cards per row, narrower grid if sparse.
     cat_sections = []
-    for cat in cats:
+    seen_cats = set()
+    for cat in CATEGORY_ORDER:
         if cat.lower() == "opinion":
             continue
         rows = db.execute(
             select(Post).where(Post.status == "published",
                                func.lower(Post.category) == cat.lower())
-            .order_by(Post.created_at.desc()).limit(3)
+            .order_by(Post.created_at.desc()).limit(4)
+        ).scalars().all()
+        if not rows:
+            continue
+        seen_cats.add(cat.lower())
+        cat_sections.append({
+            "name": cat, "slug": cat.lower(),
+            "posts": [_p(r) for r in rows],
+            "display": "card-grid-4" if len(rows) >= 3 else "card-grid-2",
+        })
+    # Any categories the pipeline produced that aren't in CATEGORY_ORDER.
+    for cat in _all_categories(db):
+        if cat.lower() == "opinion" or cat.lower() in seen_cats:
+            continue
+        rows = db.execute(
+            select(Post).where(Post.status == "published",
+                               func.lower(Post.category) == cat.lower())
+            .order_by(Post.created_at.desc()).limit(4)
         ).scalars().all()
         if rows:
-            cat_sections.append({"name": cat, "slug": cat.lower(), "posts": [_p(r) for r in rows]})
+            seen_cats.add(cat.lower())
+            cat_sections.append({
+                "name": cat, "slug": cat.lower(),
+                "posts": [_p(r) for r in rows],
+                "display": "card-grid-4" if len(rows) >= 3 else "card-grid-2",
+            })
 
     op_rows = db.execute(
         select(Post).where(Post.status == "published",
@@ -785,7 +820,7 @@ def web_index(request: Request, db: Session = Depends(get_db)):
            "most_read": _most_read(db),
            "category_sections": cat_sections,
            "opinion_posts": [_p(r) for r in op_rows],
-           "all_categories": cats}
+           "all_categories": _all_categories(db)}
     ctx.update(_site_context(db))
     return templates.TemplateResponse(request, "index.html", ctx)
 
@@ -808,7 +843,22 @@ def web_post(request: Request, post_id: int, db: Session = Depends(get_db)):
            "most_read": _most_read(db),
            "reading_time": max(1, round(words / 200))}
     ctx.update(_site_context(db))
-    return templates.TemplateResponse(request, "post.html", ctx)
+    resp = templates.TemplateResponse(request, "post.html", ctx)
+
+    # Count a view once per browser session per published post. The flnp_viewed
+    # cookie holds comma-separated post ids already seen, so refreshes and bots
+    # within one session don't inflate the number. The count is admin-only; it
+    # drives /web/popular and the "Most Read" sidebars but is never rendered.
+    viewed = request.cookies.get("flnp_viewed", "")
+    seen_ids = viewed.split(",") if viewed else []
+    if post.status == "published" and str(post_id) not in seen_ids:
+        post.view_count = (post.view_count or 0) + 1
+        db.commit()
+        seen_ids.append(str(post_id))
+        seen_ids = seen_ids[-200:]  # cap the cookie so it can't grow without bound
+        resp.set_cookie("flnp_viewed", ",".join(seen_ids),
+                        max_age=60 * 60 * 24 * 30, httponly=True)
+    return resp
 
 
 @app.get("/web/category/{category}", include_in_schema=False)
@@ -834,6 +884,7 @@ def web_latest(request: Request, db: Session = Depends(get_db)):
         .order_by(Post.created_at.desc()).limit(50)
     ).scalars().all()
     ctx = {"request": request, "current_page": "latest",
+            "page_title": "Latest News", "page_sub": "Fresh from the newsroom",
             "posts": [_p(r) for r in rows], "all_categories": _all_categories(db)}
     ctx.update(_site_context(db))
     return templates.TemplateResponse(request, "latest.html", ctx)
@@ -843,9 +894,10 @@ def web_latest(request: Request, db: Session = Depends(get_db)):
 def web_popular(request: Request, db: Session = Depends(get_db)):
     rows = db.execute(
         select(Post).where(Post.status == "published")
-        .order_by(Post.created_at.desc()).limit(30)
+        .order_by(Post.view_count.desc(), Post.created_at.desc()).limit(30)
     ).scalars().all()
     ctx = {"request": request, "current_page": "popular",
+            "page_title": "Most Popular", "page_sub": "Most-read stories right now",
             "posts": [_p(r) for r in rows], "all_categories": _all_categories(db)}
     ctx.update(_site_context(db))
     return templates.TemplateResponse(request, "latest.html", ctx)
@@ -970,6 +1022,7 @@ def admin_dashboard(request: Request, db: Session = Depends(get_db)):
     stats["ig_published"] = db.query(PlatformPost).filter(PlatformPost.platform == "instagram", PlatformPost.status == "published").count()
     recent_posts = [{"id": p.id, "title": p.social_summary or "", "language": p.language or "?",
                      "region": p.region, "status": p.status, "created_at": p.created_at,
+                     "view_count": p.view_count or 0,
                      "platform_posts": p.platform_posts} for p in
                     db.query(Post).order_by(Post.created_at.desc()).limit(10).all()]
     recent_logs = db.query(AuditLog).order_by(AuditLog.timestamp.desc()).limit(10).all()

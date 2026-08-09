@@ -9,6 +9,7 @@
   {% if og_image %}<meta property="og:image" content="{{ og_image }}"/>{% endif %}
   <meta name="twitter:card" content="summary_large_image"/>
   <title>{% block title %}Fact Line NP{% endblock %}</title>
+  <link rel="icon" href="/static/logo-circle.png"/>
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
   <link rel="stylesheet" href="/static/style.css"/>
@@ -46,11 +47,17 @@
           <a href="{{ instagram_url }}" target="_blank" rel="noopener">IG</a>
           <a href="{{ youtube_url }}" target="_blank" rel="noopener">YT</a>
         </div>
+        <button class="hamburger" id="nav-toggle" aria-label="Open menu">&#9776;</button>
+      </div>
+    </div>
+  </div>
+</header>
 <nav class="site-nav" aria-label="Main">
   <div class="container">
     <ul class="nav-list">
       <li><a href="/web" {% if current_page=='home' %}class="active"{% endif %}>Home</a></li>
       <li><a href="/web/latest" {% if current_page=='latest' %}class="active"{% endif %}>Latest</a></li>
+      <li><a href="/web/popular" {% if current_page=='popular' %}class="active"{% endif %}>Most Popular</a></li>
       <li><a href="/web/category/nepal" {% if current_cat=='nepal' %}class="active"{% endif %}>Nepal</a></li>
       <li><a href="/web/category/politics" {% if current_cat=='politics' %}class="active"{% endif %}>Politics</a></li>
       <li><a href="/web/category/economy" {% if current_cat in ['economy','business'] %}class="active"{% endif %}>Economy</a></li>

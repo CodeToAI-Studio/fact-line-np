@@ -1,10 +1,9 @@
 {% extends "base.html" %}
-{% block title %}Latest News — Fact Line NP{% endblock %}
-{% set current_page = 'latest' %}
+{% block title %}{{ page_title | default('Latest News') }} — Fact Line NP{% endblock %}
 {% block content %}
 <div class="page-band"><div class="container">
-  <h1>Latest News</h1>
-  <div class="cat-count">Most recent stories</div>
+  <h1>{{ page_title | default('Latest News') }}</h1>
+  <div class="cat-count">{{ page_sub | default('Most recent stories') }}</div>
 </div></div>
 <div class="page-wrap"><div class="container">
   <div class="two-col">
