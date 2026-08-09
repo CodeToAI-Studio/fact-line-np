@@ -20,6 +20,9 @@ env/
 *.tmp
 *.output
 
+# Single-instance lock files (held by running processes)
+*.lock
+
 # OS
 .DS_Store
 Thumbs.db
