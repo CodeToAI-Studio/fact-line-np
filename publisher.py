@@ -87,11 +87,28 @@ def post_to_facebook(post: Post, dry_run: bool = False) -> tuple[bool, str, str]
         print(f"    [FB DRY RUN] {has_image}: {caption[:80]!r}")
         return True, "dry-run-fb", "dry run"
 
+    # Decide whether the image can actually be used. Facebook downloads the
+    # image server-side, so it must be PUBLICLY reachable (no hotlink
+    # protection, not expired). Many sources (Ratopati CDN returns 403,
+    # BBC images 404 after a while) are not — which is why photo posts to FB
+    # were failing wholesale. If the image can't be fetched, fall back to a
+    # text-only post rather than failing the whole publish.
+    image_url = None
     if post.image_url:
+        try:
+            probe = http_requests.get(post.image_url, timeout=15)
+            if probe.status_code == 200 and (probe.headers.get("Content-Type", "").startswith("image")):
+                image_url = post.image_url
+            else:
+                print(f"    [FB] image not fetchable ({probe.status_code}) — falling back to text-only")
+        except Exception:
+            print("    [FB] image fetch failed — falling back to text-only")
+
+    if image_url:
         # Photo post: the image is attached and the caption goes with it.
         url = f"{GRAPH_BASE}/{FACEBOOK_PAGE_ID}/photos"
         payload = {
-            "url": post.image_url,
+            "url": image_url,
             "caption": caption,
             "access_token": FACEBOOK_PAGE_ACCESS_TOKEN,
             "published": "true",
