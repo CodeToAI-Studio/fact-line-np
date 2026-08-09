@@ -69,10 +69,18 @@ async def lifespan(app: FastAPI):
     global llm_client
     # Enable pgvector extension before table creation (required on fresh databases
     # including Railway PostgreSQL — safe to re-run, IF NOT EXISTS is idempotent).
-    with engine.connect() as conn:
-        conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-        conn.commit()
-    Base.metadata.create_all(bind=engine)
+    # Boot is deliberately fail-fast: if the DB is unreachable or the migration
+    # fails, raising here crashes the process so the platform (Railway) logs the
+    # reason and restarts once the DB comes up — instead of the app starting with
+    # a silently dead database and timing out the healthcheck.
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            conn.commit()
+        Base.metadata.create_all(bind=engine)
+    except Exception as exc:
+        logger.error("Database bootstrap FAILED: %s", exc)
+        raise
 
     if GEMINI_API_KEY:
         llm_client = genai.Client(api_key=GEMINI_API_KEY)
