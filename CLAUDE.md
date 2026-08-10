@@ -837,6 +837,9 @@ the blocker below is resolved or the hard rules change, update `RESUME.md` too.
 - `requirements.txt` — added `pillow==12.3.0`.
 - `news-engine-watcher.bat` (Startup folder) — now also starts the local website (uvicorn 8002);
   idempotent (only starts processes not already running).
+- `backup_db.py` — created: psycopg2-based JSON snapshot of all tables to `backups/` (keep last 7).
+- `watch_pipeline.py` — step 5: daily DB backup (`_maybe_daily_backup()`, state in `.last_backup`).
+- `.gitignore` — ignore `news_db.dump` and `backups/` (full-data dumps never committed).
 
 ---
 
@@ -858,14 +861,19 @@ The complete feature list that is already DONE is in "What's Done" #38 onward pl
      or also move). The workflow file is disposable/portable — no lock-in.
 2. **Custom domain (optional).** Site runs on `https://web-production-a8dc3.up.railway.app`
    (Railway subdomain). Buying `factlinenp.com` + pointing it at Railway would give a real
-   brand URL. Railway custom domains may be a paid feature.
-3. **Data backup / hygiene.** `news_db.dump` (2.9MB) sits untracked in the repo — decide whether
-   to commit it or set up a routine Railway DB backup (e.g. a cron that runs `pg_dump`).
+   brand URL. Railway custom domains may be a paid feature. (User: held off for now.)
+3. **Data backup — DONE (2026-08-10).** `backup_db.py` snapshots all 7 tables to a local JSON
+   (`backups/news_db_*.json`, keep last 7) via psycopg2; `watch_pipeline` runs it once/day
+   (state in `.last_backup`). `pg_dump` unusable (Railway is PG18, local pg_dump 16). The stale
+   `news_db.dump` and `backups/` are gitignored.
 4. **Deferred — WhatsApp approval.** Code is in the repo (`whatsapp_bot.py`, `whatsapp_client.py`);
    user chose Telegram. Revisit only if wanted.
 5. **Deferred — Threads/TikTok publishing.** Deliberately out of scope for launch (user decision).
-6. **Minor polish (as needed):** Streamlit UI is local-only; `news_db.dump` cleanup; any admin UX
-   tweaks. Not blockers.
+   User: do these LAST, only if wanted later.
+6. **Minor polish (as needed):** Streamlit UI is local-only; any admin UX tweaks. A useful later
+   improvement: `ingest_rss.extract_image_url` could also parse `<content:encoded>` `<img>` tags
+   (WordPress-style feeds hide images there) — not critical since the placeholder guarantee covers
+   image-less posts. Not blockers.
 
 ---
 
