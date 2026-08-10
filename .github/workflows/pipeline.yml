@@ -1,0 +1,49 @@
+name: Fact Line NP Pipeline
+
+# Runs the news pipeline (ingest → generate → publish → retention) on a
+# schedule so the operation runs 24/7 even when the local PC watcher is off.
+# It calls `watch_pipeline.py --once` (one full cycle then exit) — the same
+# code the local watcher runs continuously, just as a cron job.
+#
+# NOTE: this must be the ONLY publisher running. Keep the local
+# `watch_pipeline.py` STOPPED (the Startup batch no longer starts it) —
+# otherwise the pipeline double-publishes to FB/IG. The Telegram bot stays
+# local for approvals. Removing this file returns to local-only.
+
+on:
+  schedule:
+    # Every 15 minutes, offset to avoid the common minute marks.
+    - cron: "13,28,43,58 * * * *"
+  workflow_dispatch: {}   # manual "Run workflow" button
+
+# If a cycle is still running when the next fires, wait — never double-run.
+concurrency:
+  group: fact-line-np-pipeline
+  cancel-in-progress: false
+
+jobs:
+  pipeline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run pipeline (one-shot cycle)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SITE_BASE_URL: ${{ secrets.SITE_BASE_URL }}
+          UNCLUSTERED_RETENTION_DAYS: ${{ secrets.UNCLUSTERED_RETENTION_DAYS }}
+          GEMINI_API_KEYS: ${{ secrets.GEMINI_API_KEYS }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          FACEBOOK_PAGE_ID: ${{ secrets.FACEBOOK_PAGE_ID }}
+          FACEBOOK_PAGE_ACCESS_TOKEN: ${{ secrets.FACEBOOK_PAGE_ACCESS_TOKEN }}
+          INSTAGRAM_BUSINESS_ACCOUNT_ID: ${{ secrets.INSTAGRAM_BUSINESS_ACCOUNT_ID }}
+        run: python watch_pipeline.py --once
