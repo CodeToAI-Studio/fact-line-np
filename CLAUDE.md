@@ -837,6 +837,8 @@ the blocker below is resolved or the hard rules change, update `RESUME.md` too.
 - `requirements.txt` — added `pillow==12.3.0`.
 - `news-engine-watcher.bat` (Startup folder) — now also starts the local website (uvicorn 8002);
   idempotent (only starts processes not already running).
+- `ingest_rss.py` — `extract_image_url` now falls back to parsing `<content:encoded>` `<img>` tags
+  (WordPress feeds); OnlineKhabar/Ratopati/Nagarik now yield real images instead of placeholders.
 - `backup_db.py` — created: psycopg2-based JSON snapshot of all tables to `backups/` (keep last 7).
 - `watch_pipeline.py` — step 5: daily DB backup (`_maybe_daily_backup()`, state in `.last_backup`).
 - `.gitignore` — ignore `news_db.dump` and `backups/` (full-data dumps never committed).
@@ -870,10 +872,10 @@ The complete feature list that is already DONE is in "What's Done" #38 onward pl
    user chose Telegram. Revisit only if wanted.
 5. **Deferred — Threads/TikTok publishing.** Deliberately out of scope for launch (user decision).
    User: do these LAST, only if wanted later.
-6. **Minor polish (as needed):** Streamlit UI is local-only; any admin UX tweaks. A useful later
-   improvement: `ingest_rss.extract_image_url` could also parse `<content:encoded>` `<img>` tags
-   (WordPress-style feeds hide images there) — not critical since the placeholder guarantee covers
-   image-less posts. Not blockers.
+6. **Minor polish (mostly done).** `ingest_rss.extract_image_url` now also parses
+   `<content:encoded>` `<img>` tags — OnlineKhabar/Ratopati/Nagarik went 0/5 → 5/5 entries
+   with a real image (more posts get source photos instead of placeholders). Remaining minor
+   items if wanted later: Streamlit UI is local-only; any admin UX tweaks. Not blockers.
 
 ---
 
