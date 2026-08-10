@@ -65,6 +65,13 @@ INSTAGRAM_BUSINESS_ACCOUNT_ID = os.getenv("INSTAGRAM_BUSINESS_ACCOUNT_ID")
 # Instagram caption limit is 2,200 chars; truncate gracefully if needed.
 IG_CAPTION_LIMIT = 2200
 
+# Cap how many Instagram posts are published per single run. During a backlog
+# catch-up, pushing every pending IG row at once trips Meta's per-account rate
+# limit ("User is performing too many actions", error 9). Publishing a small
+# batch per run keeps the account healthy; the watcher's next cycle publishes
+# the next batch, so posts still flow at a controlled pace.
+MAX_IG_PUBLISHES_PER_RUN = int(os.getenv("MAX_IG_PUBLISHES_PER_RUN", "6"))
+
 
 def _truncate(text: str, limit: int) -> str:
     if len(text) <= limit:
@@ -304,6 +311,7 @@ def run_publisher(dry_run: bool = False):
         print(f"📤 Found {len(pending)} pending platform post(s) to publish.\n")
 
         processed_post_ids = set()
+        ig_published_this_run = 0
 
         for pp in pending:
             post = pp.post
@@ -315,7 +323,16 @@ def run_publisher(dry_run: bool = False):
             if pp.platform == "facebook":
                 success, platform_id, msg = post_to_facebook(post, dry_run=dry_run)
             elif pp.platform == "instagram":
+                # Gentle pace for Instagram: cap publishes per run to avoid
+                # Meta's per-account rate limit during backlog catch-up. The
+                # remaining pending IG rows wait for the next cycle.
+                if ig_published_this_run >= MAX_IG_PUBLISHES_PER_RUN:
+                    print(f"  (IG publishing capped at {MAX_IG_PUBLISHES_PER_RUN} "
+                          f"this run — remaining rows wait for the next cycle)")
+                    continue
                 success, platform_id, msg = post_to_instagram(post, dry_run=dry_run)
+                if success is True:
+                    ig_published_this_run += 1
             else:
                 continue
 
