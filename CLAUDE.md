@@ -851,18 +851,24 @@ the blocker below is resolved or the hard rules change, update `RESUME.md` too.
 The complete feature list that is already DONE is in "What's Done" #38 onward plus the
 2026-08-09/10 sessions — see "What's Done" and the Key Decisions section.)*
 
-1. **24/7 hosting for the pipeline (the biggest remaining gap).** The site is live on Railway,
-   but the watcher + Telegram bot run **only on the user's PC** (Railway is paid-only for new
-   services; user has NO credit card). Research concluded:
-   - **GitHub Actions cron** is the only card-free cloud option that can run the pipeline
-     (`watch_pipeline.py --once` on a schedule, e.g. every 15–30 min). Public repo = free
-     minutes, min interval 5 min. Would run even when the PC is off.
-   - Google/Oracle free VMs need a card. Render/Vercel/Cloudflare/HF Spaces can't run a
-     background loop. **Action (not yet built):** create `.github/workflows/pipeline.yml`
-     running `watch_pipeline.py --once` on a schedule + GitHub secrets for the .env values.
-     When doing this, STOP the local watcher to avoid double-ingest/publish (bot can stay local
-     or also move). The workflow file is disposable/portable — no lock-in.
-2. **Custom domain (optional).** Site runs on `https://web-production-a8dc3.up.railway.app`
+1. **PENDING TOMORROW (assigned 2026-08-11 evening, user-specific) — content style + hygiene:**
+   - Rewrite post drafting (`generate_posts.py`) so `social_summary` reads in **RONB/NEB short-news
+     style** — punchy, casual, emoji hooks, **hashtags + source** on every post.
+   - **Techpana-style image generation** for posts that need graphics (user to send examples).
+   - **Auto-comment activation** — `comment_on_platform_post()` is built; needs user to enable the
+     Meta app permission (`pages_manage_engagement` FB, `instagram_manage_comments` IG), then it turns on.
+   - **Auto-delete posts not approved within 24h** — pending posts older than 24h get deleted, not kept.
+   - **Best method to always keep DB storage clean** (beyond current retention).
+   - **Duplicate posts for approval** — distinct-text posts covering the same event both get drafted;
+     need event-level dedup so only one post per story.
+   *(Full detail in memory: pending-tasks-2026-08-11.)*
+2. **24/7 hosting — BUILT (2026-08-11), needs verification.** `.github/workflows/pipeline.yml`
+   runs `watch_pipeline.py --once` every 15 min (offset cron) + manual dispatch + concurrency guard.
+   All 13 secrets set via `gh`. Startup batch updated to **no longer start the local watcher** (keeps
+   bot + uvicorn). **TODO: verify the first GH Actions run succeeded (Actions tab / `gh run list`),
+   and stop the currently-running local watcher** so GH Actions is the sole publisher (avoid
+   double-publish). Removing the workflow file returns to local-only.
+3. **Custom domain (optional).** Site runs on `https://web-production-a8dc3.up.railway.app`
    (Railway subdomain). Buying `factlinenp.com` + pointing it at Railway would give a real
    brand URL. Railway custom domains may be a paid feature. (User: held off for now.)
 3. **Data backup — DONE (2026-08-10).** `backup_db.py` snapshots all 7 tables to a local JSON
