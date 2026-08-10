@@ -26,6 +26,7 @@ import argparse
 import json
 import os
 import sys
+from datetime import datetime, timezone, timedelta
 
 import numpy as np
 from dotenv import load_dotenv
@@ -57,6 +58,18 @@ CLUSTER_DISTANCE_THRESHOLD = 0.22  # calibrated against real data via diagnose_c
                                      # shows a different range.
 CLUSTER_TIME_WINDOW_HOURS = 72     # articles further apart than this aren't clustered together
 MIN_INDEPENDENT_SOURCES = 2        # the verification bar decided earlier
+# Only articles younger than this are eligible to be drafted into a post.
+# Anything older is stale news and must never be published on a "current"
+# news site — it's left unclustered and eventually deleted by retention.
+MAX_ARTICLE_AGE_HOURS = int(os.getenv("MAX_ARTICLE_AGE_HOURS", "24"))
+
+# Cap how many clusters are drafted per cycle. With a large fresh backlog,
+# trying to draft hundreds of clusters at once blows the free-tier Gemini
+# rate limit and stalls the whole cycle (hours of 0 posts). Drafting a small
+# batch per cycle (newest clusters first, since the query is newest-first)
+# keeps a steady stream of fresh posts flowing while staying under rate
+# limits. The rest wait for a later cycle.
+MAX_DRAFTS_PER_CYCLE = int(os.getenv("MAX_DRAFTS_PER_CYCLE", "5"))
 
 PLATFORMS = ["website", "facebook", "instagram", "threads", "tiktok"]  # X dropped (cost)
 
@@ -219,13 +232,18 @@ def run_pipeline(dry_run: bool = False) -> int:
     """
     db = SessionLocal()
     try:
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=MAX_ARTICLE_AGE_HOURS)
         unclustered = (
             db.query(Article)
-            .filter(Article.post_id.is_(None))
-            .order_by(Article.created_at)
+            .filter(
+                Article.post_id.is_(None),
+                Article.created_at >= cutoff,  # freshness cap: only recent news
+            )
+            .order_by(Article.created_at.desc())  # newest-first
             .all()
         )
-        print(f"{len(unclustered)} unclustered article(s) to consider.")
+        print(f"{len(unclustered)} unclustered article(s) to consider "
+              f"(within last {MAX_ARTICLE_AGE_HOURS}h; older ones are skipped as stale).")
         if not unclustered:
             return 0
 
@@ -233,18 +251,29 @@ def run_pipeline(dry_run: bool = False) -> int:
         print(f"Formed {len(clusters)} cluster(s) (includes singletons that won't pass the source bar).\n")
 
         posts_created = 0
+        drafts_attempted = 0
         for cluster in clusters:
             n_sources = count_distinct_sources(cluster)
             if n_sources < MIN_INDEPENDENT_SOURCES:
                 continue  # not enough corroboration yet; stays unclustered for a future run
+
+            # Pace drafting: only attempt MAX_DRAFTS_PER_CYCLE Gemini calls per
+            # cycle so the pipeline keeps producing fresh posts instead of
+            # stalling on the free-tier rate limit.
+            if drafts_attempted >= MAX_DRAFTS_PER_CYCLE:
+                print(f"  (reached {MAX_DRAFTS_PER_CYCLE} drafts this cycle — "
+                      f"remaining fresh clusters wait for the next cycle)\n")
+                break
 
             preview = "; ".join(a.title[:50] for a in cluster)
             print(f"Cluster ({n_sources} distinct sources): {preview}")
 
             if dry_run:
                 print("  [dry run] would call Gemini to verify + draft\n")
+                drafts_attempted += 1
                 continue
 
+            drafts_attempted += 1
             try:
                 result, model_used = call_gemini_for_cluster(cluster)
             except Exception as e:

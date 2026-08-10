@@ -64,8 +64,9 @@ def run_retention(dry_run: bool = False) -> dict:
 
         # --- 2. Unclustered articles past the retention window -------------
         cutoff = datetime.now(timezone.utc) - timedelta(days=UNCLUSTERED_RETENTION_DAYS)
+        # select(Article.id) yields scalar ints — use each value directly.
         unclustered_ids = [
-            a.id for a in db.execute(
+            a for a in db.execute(
                 select(Article.id).where(
                     Article.post_id.is_(None),
                     Article.created_at < cutoff,
