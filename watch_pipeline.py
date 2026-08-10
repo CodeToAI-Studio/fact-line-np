@@ -25,6 +25,7 @@ USAGE
     python watch_pipeline.py --once       # single run then exit (same as run_pipeline.bat)
 """
 import sys
+import os
 import argparse
 import time
 from datetime import datetime
@@ -84,7 +85,31 @@ def run_once():
     except Exception as e:
         print(f"[{_timestamp()}] ERROR in retention: {e}")
 
+    # Step 5 — daily DB backup (once per day, tracked by a state file)
+    _maybe_daily_backup()
+
     print(f"\n[{_timestamp()}] Pipeline cycle complete.")
+
+
+def _maybe_daily_backup():
+    """Run backup_db once per day. Uses a small state file so we don't dump
+    the whole DB on every 10-minute cycle."""
+    state_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".last_backup")
+    from datetime import date
+    today = date.today().isoformat()
+    try:
+        if os.path.exists(state_path):
+            with open(state_path) as f:
+                if f.read().strip() == today:
+                    return  # already backed up today
+        print(f"\n[{_timestamp()}] --- Daily DB backup ---")
+        # Import lazily so watch_pipeline works even if backup deps are missing.
+        import backup_db
+        backup_db.run_backup()
+        with open(state_path, "w") as f:
+            f.write(today)
+    except Exception as e:
+        print(f"[{_timestamp()}] ERROR in daily backup: {e}")
 
 
 def main():

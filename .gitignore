@@ -23,6 +23,10 @@ env/
 # Single-instance lock files (held by running processes)
 *.lock
 
+# Database backups — never commit (may contain full data)
+news_db.dump
+backups/
+
 # OS
 .DS_Store
 Thumbs.db
