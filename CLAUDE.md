@@ -690,7 +690,8 @@ the blocker below is resolved or the hard rules change, update `RESUME.md` too.
    - `generate_posts.py`: tries `gemini-3.5-flash-lite` FIRST (measured ~15+ RPM, 500/day)
      and falls back to `gemini-3.6-flash` (only ~20/day, very low RPM) for quality. **This is
      what made the pipeline draft posts again after days of 0.**
-   - User added **5 Gemini keys from different Google accounts** (`.env` `GEMINI_API_KEYS`).
+   - User added **8 Gemini keys from different Google accounts** (`.env` `GEMINI_API_KEYS`;
+     5 original + 3 more on 2026-08-10). All verified working. ~8×500 = ~4000 req/day cap.
 
 **43. `telegram_bot.py` single-instance lock.**
    - The venv python spawns a base-python child and BOTH ran the script → two `getUpdates`
@@ -952,13 +953,14 @@ The complete feature list that is already DONE is in "What's Done" #38 onward pl
    succeeded (posts published to FB up to id 54). If it expires again, regenerate at
    https://developers.facebook.com against App `961662956934562`. Token is in the **local**
    `.env`; also set on Railway if the server should self-publish.
-2. **`GEMINI_API_KEY` free-tier quota — mitigated, not eliminated.** The key(s) are on
-   free-tier projects (500 req/day per project). Mitigation: `gemini_keys.py` rotates across
-   **5 keys** (`GEMINI_API_KEYS`) + paces per-key (`GEMINI_RPM_PER_KEY`, default 8/min) +
+2. **`GEMINI_API_KEY` free-tier quota — mitigated, not eliminated.** The keys are on
+   free-tier projects (500 req/day each). Mitigation: `gemini_keys.py` rotates across
+   **8 keys** (`GEMINI_API_KEYS`) + paces per-key (`GEMINI_RPM_PER_KEY`, default 8/min) +
    `generate_posts` uses lite-first model order. **This is why the pipeline drafts again.**
    To fully remove the cap, enable billing on a Gemini project (also unlocks `/synthesize`
-   for the live site, which shares the same quota). Watch for the daily reset — the pipeline
-   fails soft on 429 and retries next cycle.
+   for the live site, which shares the same quota). When all keys hit their daily 500 (seen
+   2026-08-10 — no posts drafted since ~7:40 AM until keys were added), drafting pauses until
+   the daily reset or more keys are added. Pipeline fails soft on 429 and retries next cycle.
 3. **Who populated `region` for the existing 240 rows?** Not `ingest.py` (confirmed by
    inspection) and there is no `backfill_region.py`. Likely manual SQL or a deleted script.
    Harmless now that ingestion sets region explicitly. Values are lowercase
