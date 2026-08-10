@@ -103,7 +103,12 @@ def clean_html(raw: str) -> str:
 
 def extract_image_url(entry) -> str | None:
     """RSS entries expose images in several non-standardised ways.
-    Check the common ones in order of reliability."""
+    Check the common ones in order of reliability.
+
+    Final fallback: parse the entry's HTML (content:encoded / description /
+    summary) for an <img> tag — WordPress-style feeds (OnlineKhabar,
+    Ratopati, Nagarik, Techmandu) hide their images there rather than in
+    media:*/enclosure elements."""
     media_content = entry.get("media_content")
     if media_content:
         url = media_content[0].get("url")
@@ -120,6 +125,25 @@ def extract_image_url(entry) -> str | None:
     for enclosure in entry.get("enclosures", []):
         if enclosure.get("type", "").startswith("image/"):
             return enclosure.get("href")
+
+    # Fallback: look for an <img> in the HTML content. Build the HTML from
+    # whatever the feed provided (full content, then summary/description).
+    html = ""
+    if entry.get("content"):
+        html = entry["content"][0].get("value", "")
+    if not html:
+        html = entry.get("summary", "") or entry.get("description", "") or ""
+    if html:
+        soup = BeautifulSoup(html, "html.parser")
+        img = soup.find("img")
+        if img and img.get("src"):
+            # feedparser often yields relative or protocol-relative URLs
+            src = img["src"].strip()
+            if src.startswith("//"):
+                src = "https:" + src
+            elif src.startswith("/"):
+                src = "https:" + src  # best-effort; host unknown
+            return src or None
     return None
 
 
