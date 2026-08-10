@@ -870,8 +870,13 @@ The complete feature list that is already DONE is in "What's Done" #38 onward pl
    `news_db.dump` and `backups/` are gitignored.
 4. **Deferred — WhatsApp approval.** Code is in the repo (`whatsapp_bot.py`, `whatsapp_client.py`);
    user chose Telegram. Revisit only if wanted.
-5. **Deferred — Threads/TikTok publishing.** Deliberately out of scope for launch (user decision).
-   User: do these LAST, only if wanted later.
+5. **Deferred — Threads/TikTok publishing.** User decision (2026-08-10): **defer both**. Research
+   found both need external API setup the user doesn't have (Threads: Meta `threads_content_publish`
+   app review + token; TikTok: app approval + `video.publish` scope + a content audit that restricts
+   unaudited clients to private viewing + video generation the pipeline doesn't have — it only
+   produces a static square JPEG). The `platform_posts` rows already exist (created by
+   `generate_posts.PLATFORMS`); they stay `pending` and do NOT block `Post.status → published`
+   (see `ACTIVE_PLATFORMS = {"facebook","instagram"}`). Revisit only if the user wants those channels.
 6. **Minor polish (mostly done).** `ingest_rss.extract_image_url` now also parses
    `<content:encoded>` `<img>` tags — OnlineKhabar/Ratopati/Nagarik went 0/5 → 5/5 entries
    with a real image (more posts get source photos instead of placeholders). Remaining minor
