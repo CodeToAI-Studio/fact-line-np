@@ -72,6 +72,57 @@ def _truncate(text: str, limit: int) -> str:
     return text[: limit - 3].rstrip() + "..."
 
 
+def article_url(post: Post) -> str:
+    """The public URL of a post's article page on the Fact Line NP website."""
+    base = os.getenv("SITE_BASE_URL", "").strip()
+    return f"{base.rstrip('/')}/web/post/{post.id}"
+
+
+def comment_on_platform_post(platform: str, platform_post_id: str, post: Post) -> tuple[bool, str]:
+    """Post an auto-comment on a just-published FB/IG post, pointing readers to
+    the article on the website. Runs on OUR OWN post only.
+
+    Facebook supports a richer comment: message + image attachment
+    (attachment_url = the guaranteed /post_image URL). Instagram comments are
+    text-only, so IG gets the message-with-link version.
+
+    Failure is logged and does NOT fail the publish — a comment is
+    non-critical (the post is already live).
+    """
+    if not platform_post_id:
+        return False, "no platform post id to comment on"
+    link = article_url(post)
+    message = f"📰 Read the full story on Fact Line NP: {link}"
+
+    try:
+        if platform == "facebook":
+            site_base = os.getenv("SITE_BASE_URL", "").strip()
+            payload = {"message": message, "access_token": FACEBOOK_PAGE_ACCESS_TOKEN}
+            img = images.public_image_url(post.id, site_base or None)
+            if img:
+                payload["attachment_url"] = img
+            resp = http_requests.post(
+                f"{GRAPH_BASE}/{platform_post_id}/comments", data=payload, timeout=30
+            )
+        elif platform == "instagram":
+            resp = http_requests.post(
+                f"{GRAPH_BASE}/{platform_post_id}/comments",
+                data={"message": message, "access_token": FACEBOOK_PAGE_ACCESS_TOKEN},
+                timeout=30,
+            )
+        else:
+            return False, f"no comment support for platform {platform}"
+
+        data = resp.json()
+        if resp.status_code == 200 and "id" in data:
+            return True, f"commented on {platform} post {platform_post_id} -> {data['id']}"
+        err = data.get("error", {})
+        msg = err.get("message", resp.text[:200])
+        return False, f"❌ {platform} comment error {err.get('code', '?')}: {msg}"
+    except Exception as e:
+        return False, f"❌ {platform} comment failed: {type(e).__name__}: {e}"
+
+
 def post_to_facebook(post: Post, dry_run: bool = False) -> tuple[bool, str, str]:
     """
     Returns (success, platform_post_id, log_message).
@@ -275,6 +326,9 @@ def run_publisher(dry_run: bool = False):
                     pp.status = "published"
                     pp.platform_post_id = platform_id
                     pp.published_at = datetime.now(timezone.utc)
+                    # Auto-comment on our own post with the article link.
+                    ok_c, msg_c = comment_on_platform_post(pp.platform, platform_id, post)
+                    print(f"  💬 {msg_c}")
                 elif success is False:
                     # Real API error — mark failed so it doesn't retry every run.
                     # Fix the underlying cause, then reset status to "pending" manually.
