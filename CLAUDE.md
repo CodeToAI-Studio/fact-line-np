@@ -862,12 +862,14 @@ The complete feature list that is already DONE is in "What's Done" #38 onward pl
    - **Duplicate posts for approval** — distinct-text posts covering the same event both get drafted;
      need event-level dedup so only one post per story.
    *(Full detail in memory: pending-tasks-2026-08-11.)*
-2. **24/7 hosting — BUILT (2026-08-11), needs verification.** `.github/workflows/pipeline.yml`
-   runs `watch_pipeline.py --once` every 15 min (offset cron) + manual dispatch + concurrency guard.
-   All 13 secrets set via `gh`. Startup batch updated to **no longer start the local watcher** (keeps
-   bot + uvicorn). **TODO: verify the first GH Actions run succeeded (Actions tab / `gh run list`),
-   and stop the currently-running local watcher** so GH Actions is the sole publisher (avoid
-   double-publish). Removing the workflow file returns to local-only.
+2. **24/7 hosting — DONE & VERIFIED (2026-08-11).** `.github/workflows/pipeline.yml` runs two jobs:
+   - **pipeline** job: `watch_pipeline.py --once` every 15 min (offset cron).
+   - **bot** job: `telegram_bot.py --once` every 5 min — sends pending posts + processes Approve/Reject
+     taps (`--once` fetches queued updates via get_updates, so buttons work on a cron).
+   All secrets set via `gh`. Local watcher AND local bot STOPPED; Startup batch now only starts
+   uvicorn (dev preview). GH Actions is the **sole publisher + sole approval channel**. Verified:
+   scheduled runs all `success`; a manual run ran both jobs. The 5-min bot cadence means approvals
+   arrive & process within ~5 min of a tap. Removing the workflow file returns to local-only.
 3. **Custom domain (optional).** Site runs on `https://web-production-a8dc3.up.railway.app`
    (Railway subdomain). Buying `factlinenp.com` + pointing it at Railway would give a real
    brand URL. Railway custom domains may be a paid feature. (User: held off for now.)
