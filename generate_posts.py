@@ -16,6 +16,16 @@ What this does NOT do yet: notify anyone. Posts sit in "pending" until the
 Telegram bot (next piece) sends them for approval. Nothing here publishes
 anything.
 
+Duplicate-prevention: clustering can still produce two near-identical
+clusters (same event, different source mixes) — which would mean two posts
+for one story. Before any post is drafted, the event embedding is compared
+against every existing Post (any status: pending/approved/published/
+rejected) via cosine distance on the shared 768-dim embedding space. A
+cluster whose event embedding is within EVENT_SIMILARITY_THRESHOLD of an
+existing post's event embedding is a duplicate story → skipped, and its
+articles stay unclustered (released for a later run if the event changes).
+This is the event-level dedup that keeps one story → one post.
+
 USAGE
 -----
     python generate_posts.py             # normal run
@@ -29,6 +39,7 @@ import sys
 from datetime import datetime, timezone, timedelta
 
 import numpy as np
+from sqlalchemy import select
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -71,6 +82,14 @@ MAX_ARTICLE_AGE_HOURS = int(os.getenv("MAX_ARTICLE_AGE_HOURS", "24"))
 # keeps a steady stream of fresh posts flowing while staying under rate
 # limits. The rest wait for a later cycle.
 MAX_DRAFTS_PER_CYCLE = int(os.getenv("MAX_DRAFTS_PER_CYCLE", "5"))
+
+# Event-level dedup: how close a cluster's event embedding must be to an
+# existing Post's event embedding to count as the SAME story (→ skip, one
+# post per story). Cluster distance at 0.14 merges only same-event articles;
+# a threshold a bit above that is right for "is this the same event as an
+# already-drafted post?". The event embedding is the mean of the cluster's
+# article embeddings — the same vector space as the Post event embeddings.
+EVENT_SIMILARITY_THRESHOLD = float(os.getenv("EVENT_SIMILARITY_THRESHOLD", "0.18"))
 
 PLATFORMS = ["website", "facebook", "instagram", "threads", "tiktok"]  # X dropped (cost)
 
@@ -142,6 +161,58 @@ def cluster_articles(articles, distance_threshold: float, time_window_hours: flo
 
 def count_distinct_sources(cluster) -> int:
     return len(set(a.source for a in cluster))
+
+
+def cluster_centroid(cluster) -> np.ndarray:
+    """The cluster's representative embedding: the mean of its articles'
+    embeddings. Used as the cluster's 'event vector' for cross-run dedup."""
+    vectors = [np.array(a.embedding, dtype=float) for a in cluster]
+    return np.mean(vectors, axis=0)
+
+
+def _is_duplicate_event(db, cluster) -> tuple[bool, int | None]:
+    """True when this cluster is the same underlying event as an EXISTING Post.
+
+    Compares the cluster's event embedding (mean of its articles' embeddings)
+    against the stored event embedding of every Post in the DB (all statuses —
+    a pending duplicate must not get drafted while the first copy still awaits
+    approval). Below EVENT_SIMILARITY_THRESHOLD = same event → skip. Returns
+    (is_duplicate, matched_post_id). Cheap and key-free: a handful of Posts ×
+    one mean-embedding comparison, run only for clusters that pass the
+    source-count bar.
+
+    The threshold is deliberately slightly above the cluster threshold: an
+    event resurfaces with slightly different wording and should still be
+    caught. Callers leave the cluster's articles unclustered (post_id stays
+    NULL) so they can re-form differently later if the story develops.
+    """
+    centroid = cluster_centroid(cluster)
+    posts = db.execute(select(Post)).scalars().all()
+    for post in posts:
+        post_emb = _post_event_embedding(db, post.id)
+        if post_emb is None:
+            continue
+        if cosine_distance(centroid, post_emb) <= EVENT_SIMILARITY_THRESHOLD:
+            return True, post.id
+    return False, None
+
+
+def _post_event_embedding(db, post_id: int) -> np.ndarray | None:
+    """A vector for an existing post's event in the SAME 768-dim embedding
+    space the cluster centroid lives in.
+
+    Uses the mean of the Article embeddings still linked to the post — the
+    same construction as cluster_centroid(), so the two compare like-for-like.
+    None when no usable vectors remain (e.g. every linked article was already
+    retained/deleted) — such a post simply can't be deduped against. In
+    practice the duplicate risk is pending/approved posts whose articles are
+    still present, so this covers the realistic cases.
+    """
+    arts = db.query(Article).filter(Article.post_id == post_id).all()
+    vectors = [np.array(a.embedding, dtype=float) for a in arts if a.embedding is not None]
+    if not vectors:
+        return None
+    return np.mean(vectors, axis=0)
 
 
 def build_verification_prompt(cluster) -> str:
@@ -262,6 +333,15 @@ def run_pipeline(dry_run: bool = False) -> int:
             n_sources = count_distinct_sources(cluster)
             if n_sources < MIN_INDEPENDENT_SOURCES:
                 continue  # not enough corroboration yet; stays unclustered for a future run
+
+            # Event-level dedup: don't draft a second post for a story that
+            # already has one. Articles stay unclustered (post_id NULL) so
+            # they can re-form into a genuinely different cluster later.
+            is_dup, dup_post_id = _is_duplicate_event(db, cluster)
+            if is_dup:
+                preview_dup = "; ".join(a.title[:50] for a in cluster)
+                print(f"  SKIP duplicate event (matches existing Post id={dup_post_id}): {preview_dup}\n")
+                continue
 
             # Pace drafting: only attempt MAX_DRAFTS_PER_CYCLE Gemini calls per
             # cycle so the pipeline keeps producing fresh posts instead of

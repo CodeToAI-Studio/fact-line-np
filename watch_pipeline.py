@@ -12,7 +12,7 @@ Loop logic:
   3. Always run the publisher at the end of each cycle to push any
      newly-approved posts to FB + IG (publisher.run_publisher).
   4. Run the retention sweep (retention.run_retention) to delete consumed /
-     stale Article rows.
+     stale Article rows, unapproved/rejected posts, and admin clutter.
   5. Sleep POLL_INTERVAL seconds, then repeat.
 
 Steps 2 and 3 are skipped only if step 1 added nothing AND there are approved
@@ -78,7 +78,8 @@ def run_once():
     except Exception as e:
         print(f"[{_timestamp()}] ERROR in publisher: {e}")
 
-    # Step 4 — retention sweep (delete consumed / stale articles)
+    # Step 4 — retention sweep (delete consumed/stale articles + stale
+    # pending/rejected posts + expired sessions + old audit logs)
     print(f"\n[{_timestamp()}] --- Running retention sweep ---")
     try:
         run_retention()

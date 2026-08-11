@@ -7,9 +7,10 @@ file. Read it top to bottom before touching code.
 Every created/edited/deleted file goes in either "What's Done" (with reasoning) or
 "Small Changes Log" (one line). Keep "What's Next" reordered by priority.
 
-**Last updated:** 2026-08-10 (cont.) — Full publishing stack live: FB + IG + website all
-publishing with a permanent image guarantee; 49 posts published, 0 failed. All the
-2026-08-09/10 work (multi-key Gemini, pacing, image guarantee, 24/7 research) is captured below.
+**Last updated:** 2026-08-11 (cont.) — 24/7 GH Actions verified running; pending-post
+auto-delete, event-level dedup, and DB hygiene added. RONB/NEB social-summary style is
+DONE (see #46). Full publishing stack live: FB + IG + website all publishing with a
+permanent image guarantee. 2026-08-09/10 work captured below.
 
 ---
 
@@ -729,6 +730,64 @@ the blocker below is resolved or the hard rules change, update `RESUME.md` too.
 - `/post_image/53.jpg` returns 200 image/jpeg locally AND on Railway (public).
 - Live publishes confirmed on FB (up to post 54) and IG (up to post 54).
 
+### Session 2026-08-11 — 24/7 verified + approval-queue hygiene + event dedup
+
+**46. RONB/NEB-style social summaries — DONE (assigned 2026-08-11 evening).**
+   `build_verification_prompt` (`generate_posts.py`) `social_summary` guidance rewritten:
+   punchy conversational breaking-news voice, one reaction emoji hook, 3-5 topic hashtags +
+   brand tags (#FactLineNP #NepalNews #News), and source credit ("Source: <outlet>"). Verified
+   live on a Nepal cluster (Nepali output, emoji hook, both hashtag groups, source credited).
+   This covers "hashtags + source on every post" too. Remaining related: Techpana-style image
+   generation (user to send examples) + confirming the user likes the first drafted posts' tone.
+
+**47. Verified the GH Actions 24/7 workflow is running and green** — pipeline job every 15 min,
+   bot job every 5 min, all runs `completed/success` (last ~10 runs confirmed). The local
+   watcher + Telegram bot are STOPPED (no python processes running locally) — GH Actions is the
+   sole publisher, Railway webhook is the sole approval channel. Confirms What's Next #1's design.
+
+**48. Auto-delete posts not approved within 24h — DONE (assigned 2026-08-11).**
+   `retention.py` now deletes `Post` rows still `status="pending"` older than
+   `PENDING_POST_HOURS` (default 24, env-tunable). Before deleting, linked Articles are
+   released (`post_id → NULL`) so a future ingestion/clustering pass can re-corroborate the
+   story; `PlatformPost` rows cascade via the relationship. Runs every pipeline cycle (step 4),
+   so GH Actions enforces it 24/7. Verified dry-run: 0 stale pending right now (posts 156/157
+   are fresh). No change needed to the Telegram webhook (a deleted post's late tap is already
+   ignored — `apply_action` checks `post.status != "pending"` and the route guards `if post`).
+
+**49. Event-level dedup — one post per story — DONE (assigned 2026-08-11).**
+   `generate_posts.py` now compares each qualifying cluster's **event embedding** (mean of its
+   articles' embeddings — same 768-dim space as Gemini embeddings) against every existing Post's
+   event embedding (mean of that post's linked Article embeddings), via `cosine_distance` ≤
+   `EVENT_SIMILARITY_THRESHOLD` (default 0.18, env-tunable). A match → the cluster is SKIPPED
+   (its articles stay unclustered for a future run) instead of drafting a second post for the
+   same story. All Post statuses are compared (a duplicate must not draft while the first copy
+   still awaits approval). Verified with a **self-match test**: re-clustering pending post 156's
+   own articles produced distance 0.0000 → correctly flagged duplicate of 156. This is the layer
+   on top of the 0.14 cluster threshold (which already stops junk merges) — it catches the case
+   where two near-identical clusters form anyway.
+
+**50. DB storage hygiene — DONE (assigned 2026-08-11).**
+   Measured the actual footprint first: `posts` = 22 MB (mostly `image_data` blobs on 111
+   published posts — correctly kept for `/post_image`), `articles` = 7 MB, everything else
+   trivial. Found 7 rejected posts (never cleaned), 2 expired admin sessions, and unbounded
+   audit-log growth. `retention.py` now also:
+   - Deletes **rejected posts** on every sweep (dead end — immediately clean, same
+     article-release semantics as pending cleanup).
+   - Purges expired `AdminSession` rows + defensive leftovers past `SESSION_RETENTION_DAYS` (7).
+   - Purges `AuditLog` rows older than `AUDIT_RETENTION_DAYS` (90).
+   All env-tunable. Verified dry-run: would delete 7 rejected posts, 35 unclustered articles;
+   no stale pending / expired sessions / old audits right now. Storage ceiling is now bounded
+   by live published posts only — the data that actually serves readers.
+
+### Verification performed (2026-08-11)
+- `gh run list`: GH Actions runs all `completed/success` (verified 24/7 live).
+- No local `watch_pipeline`/`telegram_bot`/uvicorn processes running.
+- `py_compile` passes on `retention.py`, `generate_posts.py`, `watch_pipeline.py`.
+- `import retention`, `import generate_posts`, `import watch_pipeline` all succeed.
+- `retention.py --dry-run` against live Railway DB: correct counts for all 6 cleanup classes.
+- Dedup self-match test: pending post 156 re-cluster → distance 0.0000, correctly flagged.
+- Dedup on real fresh cluster: flagged as "new story" (no false positive on a non-duplicate).
+
 ---
 
 ## Small Changes Log
@@ -844,6 +903,12 @@ the blocker below is resolved or the hard rules change, update `RESUME.md` too.
 - `backup_db.py` — created: psycopg2-based JSON snapshot of all tables to `backups/` (keep last 7).
 - `watch_pipeline.py` — step 5: daily DB backup (`_maybe_daily_backup()`, state in `.last_backup`).
 - `.gitignore` — ignore `news_db.dump` and `backups/` (full-data dumps never committed).
+- `retention.py` — added `PENDING_POST_HOURS` (24, env-tunable) cleanup of unapproved posts; rejected-post cleanup; expired `AdminSession` purge (`SESSION_RETENTION_DAYS`, 7); old `AuditLog` purge (`AUDIT_RETENTION_DAYS`, 90). Wired into `run_retention()` step 4.
+- `generate_posts.py` — event-level dedup: `_is_duplicate_event()` + `cluster_centroid()` + `_post_event_embedding()`; cluster vs existing-Post embedding distance ≤ `EVENT_SIMILARITY_THRESHOLD` (0.18) skips drafting (one post per story).
+- `watch_pipeline.py` — step-4 comment/docstring updated for the broader retention scope.
+- `models.py` — `platform_posts.post_id` FK now `ondelete="CASCADE"` (DB-level). The rejected/stale-pending post cleanup uses core bulk deletes, which bypass ORM `delete-orphan` cascades; the cascade must live in the database or those deletes raise `IntegrityError`.
+- `migrate_platform_posts_cascade.py` — created: idempotent ALTER of `platform_posts_post_id_fkey` to add `ON DELETE CASCADE` (probes `pg_constraint`, re-run is a no-op). Applied to the live Railway DB; verified orphans = 0 after the real retention run.
+- `retention.py` — corrected comments claiming platform rows "cascade via delete-orphan"; they cascade at the DB level.
 
 ---
 
@@ -852,16 +917,16 @@ the blocker below is resolved or the hard rules change, update `RESUME.md` too.
 The complete feature list that is already DONE is in "What's Done" #38 onward plus the
 2026-08-09/10 sessions — see "What's Done" and the Key Decisions section.)*
 
-1. **PENDING TOMORROW (assigned 2026-08-11 evening, user-specific) — content style + hygiene:**
-   - Rewrite post drafting (`generate_posts.py`) so `social_summary` reads in **RONB/NEB short-news
-     style** — punchy, casual, emoji hooks, **hashtags + source** on every post.
-   - **Techpana-style image generation** for posts that need graphics (user to send examples).
-   - **Auto-comment activation** — `comment_on_platform_post()` is built; needs user to enable the
-     Meta app permission (`pages_manage_engagement` FB, `instagram_manage_comments` IG), then it turns on.
-   - **Auto-delete posts not approved within 24h** — pending posts older than 24h get deleted, not kept.
-   - **Best method to always keep DB storage clean** (beyond current retention).
-   - **Duplicate posts for approval** — distinct-text posts covering the same event both get drafted;
-     need event-level dedup so only one post per story.
+1. **Content style + hygiene — mostly DONE (2026-08-11).** Of the assigned items:
+   - ✅ **RONB/NEB short-news style** + **hashtags + source** on every post (#46) — `social_summary`
+     rewritten, verified live.
+   - ✅ **Auto-delete posts not approved within 24h** (#48) — `PENDING_POST_HOURS` in `retention.py`.
+   - ✅ **DB storage clean** (#50) — rejected posts, expired sessions, old audit logs all pruned.
+   - ✅ **Duplicate posts → one post per story** (#49) — event-level dedup in `generate_posts.py`.
+   - ⏳ **Techpana-style image generation** — user to send examples of what graphics are needed.
+   - ⏳ **Auto-comment activation** — code built; needs the user to enable Meta app permissions
+     (`pages_manage_engagement` FB, `instagram_manage_comments` IG), then it turns on.
+   - ⏳ Confirm the user likes the first drafted posts' RONB/NEB tone.
    *(Full detail in memory: pending-tasks-2026-08-11.)*
 2. **24/7 hosting — DONE & VERIFIED (2026-08-11).** `.github/workflows/pipeline.yml` runs two jobs:
    - **pipeline** job: `watch_pipeline.py --once` every 15 min (offset cron).

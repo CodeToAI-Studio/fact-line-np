@@ -92,7 +92,13 @@ class PlatformPost(Base):
     the table."""
     __tablename__ = "platform_posts"
     id = Column(Integer, primary_key=True, index=True)
-    post_id = Column(Integer, ForeignKey("posts.id"), nullable=False, index=True)
+    # DB-level ON DELETE CASCADE: platform rows are owned by their post and must
+    # die with it. retention.py deletes posts with a core bulk delete (which
+    # bypasses ORM relationship cascades), so the cascade has to live in the
+    # database, not just on the relationship.
+    post_id = Column(
+        Integer, ForeignKey("posts.id", ondelete="CASCADE"), nullable=False, index=True
+    )
 
     platform = Column(String, nullable=False, index=True)  # facebook/instagram/threads/tiktok/website
     platform_post_id = Column(String, nullable=True)        # null until actually published
