@@ -48,14 +48,15 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 # None of these are validated against real volume yet -- expect to adjust
 # once real clustering results come back. See the project notes: this was
 # an explicitly named assumption, not a settled constant.
-CLUSTER_DISTANCE_THRESHOLD = 0.22  # calibrated against real data via diagnose_clustering.py:
-                                     # same-story (Broad Peak avalanche, 45 pairs) max=0.2011
-                                     # different-story (20 random pairs) min=0.2583
-                                     # 0.22 sits in that gap. Was 0.35 (a guess) -- that
-                                     # value sat well inside "different story" territory,
-                                     # which is why clustering was merging unrelated articles.
-                                     # Revisit if a second known-same-story test (e.g. "susta")
-                                     # shows a different range.
+CLUSTER_DISTANCE_THRESHOLD = 0.14  # Re-calibrated 2026-08-11 on live data:
+                                     # genuine same-event pairs (e.g. a corroborated
+                                     # crypto story) measured 0.08-0.15, while unrelated
+                                     # topic pairs sat at 0.25-0.40. The old 0.22 was
+                                     # merging unrelated articles (junk 8-article clusters
+                                     # that Gemini then rejected) — which stopped posts
+                                     # from being drafted. Was 0.35 originally, then 0.22.
+                                     # 0.14 only clusters truly same-event articles.
+                                     # Revisit if a known same-story test shows a different range.
 CLUSTER_TIME_WINDOW_HOURS = 72     # articles further apart than this aren't clustered together
 MIN_INDEPENDENT_SOURCES = 2        # the verification bar decided earlier
 # Only articles younger than this are eligible to be drafted into a post.
