@@ -6,8 +6,12 @@ name: Fact Line NP Pipeline
 # code that used to run as long-lived loops on the PC.
 #
 # - pipeline job:  the pipeline, every 15 min.
-# - bot job:       the Telegram approval bot (send pending + process taps),
-#                  every 5 min so approvals are near-real-time.
+# - bot job:       SENDS new pending posts to Telegram every 5 min. It does
+#                  NOT process taps — Approve/Reject taps are handled in real
+#                  time by the FastAPI Telegram webhook on Railway
+#                  (POST /webhooks/telegram). The bot job must never call
+#                  getUpdates: Telegram returns 409 CONFLICT while a webhook
+#                  is registered.
 #
 # NOTE: these must be the ONLY publishers/approval channels. Keep the local
 # `watch_pipeline.py` AND `telegram_bot.py` STOPPED (the Startup batch no
@@ -67,7 +71,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: "Run Telegram bot (one-shot: send pending + process taps)"
+      - name: "Run Telegram bot (send-only: send new pending posts for approval)"
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
