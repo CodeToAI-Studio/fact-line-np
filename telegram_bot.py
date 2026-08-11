@@ -201,7 +201,9 @@ async def main_once():
     # 1. Process any queued button taps (non-blocking fetch; timeout=0 so we
     #    don't hang waiting for updates that may never come).
     try:
-        updates = await app.bot.get_updates(timeout=0)
+        # allowed_updates must include callback_query, otherwise Telegram won't
+        # return the Approve/Reject button taps and the taps are lost.
+        updates = await app.bot.get_updates(timeout=0, allowed_updates=["callback_query"])
         for update in updates:
             await app.process_update(update)
         if updates:
