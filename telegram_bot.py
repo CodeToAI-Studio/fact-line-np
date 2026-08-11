@@ -195,6 +195,9 @@ async def main_once():
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     app.add_handler(CallbackQueryHandler(handle_button))
 
+    # process_update / bot.get_updates require the Application to be initialized.
+    await app.initialize()
+
     # 1. Process any queued button taps (non-blocking fetch; timeout=0 so we
     #    don't hang waiting for updates that may never come).
     try:
@@ -209,6 +212,7 @@ async def main_once():
     # 2. Send any new pending posts.
     await send_pending_posts(app)
 
+    await app.shutdown()
     print("Bot one-shot pass complete.")
 
 
