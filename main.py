@@ -35,6 +35,11 @@ from embeddings import get_embedding
 from llm_models import PRIMARY_MODELS, list_available_models
 import gemini_keys
 from whatsapp_client import send_text_message
+import telegram_webhook
+from telegram_webhook import (
+    WEBHOOK_SECRET, verify_secret, apply_action,
+    format_post_message, WEBHOOK_URL as TELEGRAM_WEBHOOK_URL,
+)
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 WHATSAPP_WEBHOOK_VERIFY_TOKEN = os.getenv("WHATSAPP_WEBHOOK_VERIFY_TOKEN")
@@ -63,6 +68,11 @@ limiter = Limiter(key_func=get_remote_address)
 # entry point shares one list — see the note there on why.
 
 llm_client = None
+
+# Telegram bot instance for the approval webhook. Built lazily at startup
+# (only when a bot token is configured) and reused for every webhook call —
+# the same approach the send-only bot job uses.
+_telegram_bot = None
 
 
 @asynccontextmanager
@@ -125,7 +135,29 @@ async def lifespan(app: FastAPI):
     finally:
         db.close()
 
+    # Register the Telegram webhook so Approve/Reject taps push here in real
+    # time. This is a best-effort setup step: a failure is logged, not fatal
+    # (the app can still serve; the GH Actions bot job keeps sending).
+    if os.getenv("TELEGRAM_BOT_TOKEN"):
+        try:
+            # PTB v22 get/set_webhook are async, and the lifespan already runs
+            # inside the uvicorn event loop — so schedule the registration as
+            # a background task on that loop instead of awaiting it here.
+            loop = asyncio.get_running_loop()
+            loop.create_task(_register_telegram_webhook())
+        except Exception as exc:
+            logger.error("Telegram webhook registration scheduling failed: %s", exc)
+    else:
+        logger.warning(
+            "TELEGRAM_BOT_TOKEN not set -- Telegram approval webhook is disabled. "
+            "Set it on Railway to enable real-time Approve/Reject."
+        )
+
     yield
+
+    # Shutdown: drop the cached Telegram bot instance (harmless if never built).
+    global _telegram_bot
+    _telegram_bot = None
 
 
 app = FastAPI(
@@ -662,6 +694,137 @@ async def whatsapp_webhook_receive(request: Request, db: Session = Depends(get_d
         # Malformed/unexpected payload shape -- log it, but still return 200
         # below. Meta disables webhooks that repeatedly return errors.
         logger.error("Malformed WhatsApp webhook payload: %s", e)
+
+    return {"status": "ok"}
+
+
+# --- Telegram approval webhook (real-time Approve/Reject taps) ---------------
+#
+# This is the 24/7 path for approving posts. Telegram pushes button taps here
+# the instant they happen (no polling lag), so the Approve button works in
+# under a second. The GitHub Actions bot job handles only the SENDING side;
+# it must not call getUpdates while this webhook is registered.
+#
+# Security: Telegram signs every request with X-Telegram-Bot-Api-Secret-Token
+# (the shared TELEGRAM_WEBHOOK_SECRET configured in the webhook URL). We
+# verify it fails-closed so a random caller can't flip Post.status.
+
+async def _get_telegram_bot():
+    """Lazily build (once) the PTB Bot used to answer callback queries."""
+    global _telegram_bot
+    if _telegram_bot is None:
+        from telegram import Bot
+        _telegram_bot = Bot(token=os.getenv("TELEGRAM_BOT_TOKEN"))
+    return _telegram_bot
+
+
+async def _register_telegram_webhook():
+    """Best-effort: point Telegram's webhook at this app so Approve/Reject
+    taps push here in real time. Runs as a background task at startup.
+
+    A failure is logged, never fatal (the app still serves; the GH Actions
+    bot job keeps sending pending posts)."""
+    from telegram import Bot
+    bot = Bot(token=os.getenv("TELEGRAM_BOT_TOKEN"))
+    secret = telegram_webhook.webhook_secret()
+    tg_wh_url = telegram_webhook.WEBHOOK_URL
+    if not secret:
+        logger.warning(
+            "TELEGRAM_WEBHOOK_SECRET is not set -- Telegram Approve/Reject "
+            "taps will be rejected by the webhook. Approvals require it."
+        )
+    info = await bot.get_webhook_info()
+    if (info and info.url) == tg_wh_url and secret:
+        logger.info("Telegram webhook already registered at %s", tg_wh_url)
+        return
+    await bot.set_webhook(
+        url=tg_wh_url,
+        secret_token=secret or None,
+        allowed_updates=["callback_query"],
+    )
+    logger.info(
+        "Telegram webhook registered -> %s (secret=%s)",
+        tg_wh_url, "set" if secret else "MISSING",
+    )
+
+
+@app.post("/webhooks/telegram", include_in_schema=False)
+async def telegram_webhook_receive(request: Request, db: Session = Depends(get_db)):
+    secret_header = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
+    if not verify_secret(secret_header):
+        logger.warning("Telegram webhook secret verification failed -- rejecting")
+        raise HTTPException(status_code=403, detail="Invalid secret")
+
+    try:
+        payload = await request.json()
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+
+    if not WEBHOOK_SECRET:
+        # Misconfiguration: a public webhook is registered but we have no
+        # secret to verify against. Treat as failure rather than accepting
+        # unsigned taps.
+        logger.error("Telegram webhook misconfigured: TELEGRAM_WEBHOOK_SECRET is not set")
+        raise HTTPException(status_code=500, detail="Webhook misconfigured")
+
+    update_id = payload.get("update_id")
+    callback = payload.get("callback_query")
+    if callback is None:
+        # Non-callback updates (messages etc.) are not handled by this
+        # webhook -- acknowledge without error.
+        return {"status": "ok"}
+
+    query_id = callback.get("id")
+    data = callback.get("data") or ""
+    message = callback.get("message") or {}
+
+    if ":" not in data:
+        logger.warning("Malformed Telegram callback data: %r", data)
+        return {"status": "ok"}
+
+    action, post_id_str = data.split(":", 1)
+    try:
+        post_id = int(post_id_str)
+    except ValueError:
+        logger.warning("Non-integer post id in Telegram callback data: %r", data)
+        return {"status": "ok"}
+
+    post = db.query(Post).filter(Post.id == post_id).first()
+    outcome = apply_action(post, action) if post else None
+
+    if post and outcome:
+        db.commit()
+        logger.info("Post id=%s -> %s via Telegram webhook", post.id, post.status)
+    else:
+        logger.warning("Telegram tap ignored for post id=%s (already actioned or unknown)", post_id)
+
+    # Answer the callback so the button's loading spinner resolves. If
+    # editing the message also succeeds, the buttons are replaced by the
+    # outcome label, so they can't be tapped twice.
+    try:
+        bot = await _get_telegram_bot()
+        await bot.answer_callback_query(callback_query_id=query_id)
+        if post:
+            new_text = f"{format_post_message(post)}\n\n<b>{outcome}</b>"
+            if message.get("photo"):
+                await bot.edit_message_caption(
+                    chat_id=message["chat"]["id"],
+                    message_id=message["message_id"],
+                    caption=new_text,
+                    parse_mode="HTML",
+                )
+            else:
+                await bot.edit_message_text(
+                    chat_id=message["chat"]["id"],
+                    message_id=message["message_id"],
+                    text=new_text,
+                    parse_mode="HTML",
+                )
+    except Exception as e:
+        # DB state is already committed. Telegram retries this webhook later;
+        # a subsequent tap is correctly ignored by apply_action. Log and keep
+        # the request successful so Telegram stops retrying in a loop.
+        logger.error("Telegram callback answer/edit failed for update %s: %s", update_id, e)
 
     return {"status": "ok"}
 

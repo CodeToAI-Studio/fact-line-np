@@ -26,6 +26,7 @@ env/
 # Database backups — never commit (may contain full data)
 news_db.dump
 backups/
+.last_backup
 
 # OS
 .DS_Store

@@ -45,26 +45,15 @@ import sys
 from dotenv import load_dotenv
 load_dotenv()
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Bot
-from telegram.ext import Application, CallbackQueryHandler, ContextTypes
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Bot
+from telegram.ext import Application, ContextTypes
 
 from models import Post, SessionLocal
+from telegram_webhook import format_post_message, WEBHOOK_URL
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 CHECK_INTERVAL_SECONDS = 30
-
-
-def format_post_message(post: Post) -> str:
-    lang_tag = "🇳🇵 Nepali" if post.language == "nepali" else "🌐 English"
-    region = post.region or "unknown"
-    category = post.category or "uncategorised"
-    return (
-        f"<b>New post pending approval</b>  ({lang_tag})\n"
-        f"Region: {region} | Category: {category}\n\n"
-        f"{post.social_summary}\n\n"
-        f"<i>Post ID: {post.id} -- full article: view_pending_posts.py</i>"
-    )
 
 
 async def send_pending_posts(context: ContextTypes.DEFAULT_TYPE):
@@ -117,37 +106,11 @@ async def send_pending_posts(context: ContextTypes.DEFAULT_TYPE):
         db.close()
 
 
-async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()  # acknowledge immediately so the tap doesn't show a stuck loading spinner
-
-    action, post_id_str = query.data.split(":")
-    post_id = int(post_id_str)
-
-    db = SessionLocal()
-    try:
-        post = db.query(Post).filter(Post.id == post_id).first()
-        if not post:
-            return
-
-        if post.status != "pending":
-            # Already actioned (e.g. a double-tap before the edit landed) -- ignore.
-            return
-
-        post.status = "approved" if action == "approve" else "rejected"
-        db.commit()
-
-        outcome_label = "✅ APPROVED" if action == "approve" else "❌ REJECTED"
-        new_text = f"{format_post_message(post)}\n\n<b>{outcome_label}</b>"
-
-        if query.message.photo:
-            await query.edit_message_caption(caption=new_text, parse_mode="HTML")
-        else:
-            await query.edit_message_text(text=new_text, parse_mode="HTML")
-
-        print(f"Post id={post.id} -> {post.status}")
-    finally:
-        db.close()
+# Button taps are handled by the FastAPI webhook in main.py
+# (POST /webhooks/telegram) — that is the real-time 24/7 path, and the reason
+# this script no longer defines a CallbackQueryHandler. Once a webhook is
+# registered for a bot token, Telegram refuses getUpdates (409 CONFLICT), so
+# a polling loop here could not receive taps anyway.
 
 
 async def get_chat_id_mode():
@@ -178,40 +141,24 @@ def _acquire_single_instance_lock() -> bool:
 
 
 async def main_once():
-    """One-shot bot run for GitHub Actions cron (true 24/7 approvals).
+    """One-shot bot run for GitHub Actions cron — SEND-ONLY.
 
-    Runs a single sync pass, then exits:
-      1. Fetch any queued button taps (getUpdates) and process them, so an
-         Approve/Reject tap since the last run flips Post.status.
-      2. Send any new pending posts to Telegram for approval.
-
-    This is what lets the bot run as a periodic GitHub Actions job instead of
-    a long-lived polling loop on the user's PC.
+    Sends any new pending posts to Telegram for approval, then exits.
+    Approve/Reject taps are handled in real time by the FastAPI webhook
+    (main.py, POST /webhooks/telegram) on Railway — they must NOT be polled
+    here, because getUpdates returns 409 CONFLICT while a webhook is set.
     """
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         print("Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in .env first.")
         return
 
-    app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
-    app.add_handler(CallbackQueryHandler(handle_button))
+    if WEBHOOK_URL and not WEBHOOK_URL.startswith("https://"):
+        print(f"WARNING: SITE_BASE_URL does not start with https:// — webhook URL {WEBHOOK_URL!r} is not reachable by Telegram; the bot may not work.")
 
-    # process_update / bot.get_updates require the Application to be initialized.
+    app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     await app.initialize()
 
-    # 1. Process any queued button taps (non-blocking fetch; timeout=0 so we
-    #    don't hang waiting for updates that may never come).
-    try:
-        # allowed_updates must include callback_query, otherwise Telegram won't
-        # return the Approve/Reject button taps and the taps are lost.
-        updates = await app.bot.get_updates(timeout=0, allowed_updates=["callback_query"])
-        for update in updates:
-            await app.process_update(update)
-        if updates:
-            print(f"Processed {len(updates)} queued update(s).")
-    except Exception as e:
-        print(f"WARNING: could not fetch/process queued updates: {type(e).__name__}: {e}")
-
-    # 2. Send any new pending posts.
+    # Send any new pending posts (this is the only thing the bot job does now).
     await send_pending_posts(app)
 
     await app.shutdown()
@@ -239,11 +186,21 @@ def main():
         return
 
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
-    app.add_handler(CallbackQueryHandler(handle_button))
     app.job_queue.run_repeating(send_pending_posts, interval=CHECK_INTERVAL_SECONDS, first=0)
 
     print(f"Bot running -- checking for new pending posts every {CHECK_INTERVAL_SECONDS}s. Ctrl+C to stop.")
     try:
+        # A webhook is the real-time path for taps; a local polling loop can
+        # only send. If a webhook is registered (Railway is the always-on
+        # host), refuse to poll and exit so we never fight Telegram.
+        from telegram import Bot
+        info = Bot(token=TELEGRAM_BOT_TOKEN).get_webhook_info()
+        if info and info.url:
+            print(
+                "Webhook already registered (taps handled by the always-on server). "
+                "This polling mode would conflict — exiting. Use --once for send-only."
+            )
+            return
         app.run_polling()
     finally:
         try:
