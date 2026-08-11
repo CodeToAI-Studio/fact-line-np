@@ -177,12 +177,51 @@ def _acquire_single_instance_lock() -> bool:
         return False
 
 
+async def main_once():
+    """One-shot bot run for GitHub Actions cron (true 24/7 approvals).
+
+    Runs a single sync pass, then exits:
+      1. Fetch any queued button taps (getUpdates) and process them, so an
+         Approve/Reject tap since the last run flips Post.status.
+      2. Send any new pending posts to Telegram for approval.
+
+    This is what lets the bot run as a periodic GitHub Actions job instead of
+    a long-lived polling loop on the user's PC.
+    """
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        print("Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in .env first.")
+        return
+
+    app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    app.add_handler(CallbackQueryHandler(handle_button))
+
+    # 1. Process any queued button taps (non-blocking fetch; timeout=0 so we
+    #    don't hang waiting for updates that may never come).
+    try:
+        updates = await app.bot.get_updates(timeout=0)
+        for update in updates:
+            await app.process_update(update)
+        if updates:
+            print(f"Processed {len(updates)} queued update(s).")
+    except Exception as e:
+        print(f"WARNING: could not fetch/process queued updates: {type(e).__name__}: {e}")
+
+    # 2. Send any new pending posts.
+    await send_pending_posts(app)
+
+    print("Bot one-shot pass complete.")
+
+
 def main():
     if "--get-chat-id" in sys.argv:
         if not TELEGRAM_BOT_TOKEN:
             print("Set TELEGRAM_BOT_TOKEN in your .env first.")
             return
         asyncio.run(get_chat_id_mode())
+        return
+
+    if "--once" in sys.argv:
+        asyncio.run(main_once())
         return
 
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
