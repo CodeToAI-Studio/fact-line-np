@@ -51,7 +51,8 @@ Approve/Reject → `publisher.py` publishes approved posts to **Facebook + Insta
 | `ingest_rss.py` | Canonical RSS ingestion → `Article` rows (browser UA + feed timeout) |
 | `generate_posts.py` | Clustering + verification + drafting → `Post` rows (lite-first model order) |
 | `publisher.py` | Publishes approved posts → FB + IG (using public `/post_image` URLs) + website |
-| `telegram_bot.py` | Telegram approval bot (single-instance lock, DB-backed) |
+| `telegram_webhook.py` | Shared Telegram approval logic — message format, tap handling, webhook secret verify (used by `main.py` + `telegram_bot.py`) |
+| `telegram_bot.py` | Telegram approval bot — **send-only** (`--once`); taps handled by webhook |
 | `watch_pipeline.py` | Continuous loop: ingest → generate → publish → retention |
 | `backfill_category.py` | One-off: classify existing articles into categories |
 | `backfill_post_images.py` | One-off: acquire+store images for stuck posts, reset IG/FB rows |
@@ -864,12 +865,12 @@ The complete feature list that is already DONE is in "What's Done" #38 onward pl
    *(Full detail in memory: pending-tasks-2026-08-11.)*
 2. **24/7 hosting — DONE & VERIFIED (2026-08-11).** `.github/workflows/pipeline.yml` runs two jobs:
    - **pipeline** job: `watch_pipeline.py --once` every 15 min (offset cron).
-   - **bot** job: `telegram_bot.py --once` every 5 min — sends pending posts + processes Approve/Reject
-     taps (`--once` fetches queued updates via get_updates, so buttons work on a cron).
-   All secrets set via `gh`. Local watcher AND local bot STOPPED; Startup batch now only starts
-   uvicorn (dev preview). GH Actions is the **sole publisher + sole approval channel**. Verified:
-   scheduled runs all `success`; a manual run ran both jobs. The 5-min bot cadence means approvals
-   arrive & process within ~5 min of a tap. Removing the workflow file returns to local-only.
+   - **bot** job: `telegram_bot.py --once` every 5 min — SENDS new pending posts to Telegram only.
+   Approve/Reject taps are handled **instantly** by the Telegram webhook on Railway
+   (`POST /webhooks/telegram` in `main.py`) — no polling. All secrets set via `gh`. Local watcher
+   AND local bot STOPPED; Startup batch now only starts uvicorn (dev preview). GH Actions is the
+   **sole publisher**; Railway webhook is the **sole approval channel**. Removing the workflow file
+   returns to local-only.
 3. **Custom domain (optional).** Site runs on `https://web-production-a8dc3.up.railway.app`
    (Railway subdomain). Buying `factlinenp.com` + pointing it at Railway would give a real
    brand URL. Railway custom domains may be a paid feature. (User: held off for now.)
@@ -940,6 +941,12 @@ The complete feature list that is already DONE is in "What's Done" #38 onward pl
 - **The watcher + bot are intentionally local** (Railway is paid-only for new services; user has
   no card). The site stays on Railway 24/7; the pipeline runs while the PC is on. GitHub
   Actions cron is the researched card-free option for true 24/7 (see What's Next #1).
+- **Telegram Approve/Reject taps use a webhook on Railway, not polling.** `POST /webhooks/telegram`
+  (in `main.py`) is registered with Telegram at startup (background task) and handles taps in
+  real time — the GH Actions bot job is **send-only** and must never call `getUpdates` (Telegram
+  returns 409 CONFLICT while a webhook is set). Webhook requests are verified via
+  `X-Telegram-Bot-Api-Secret-Token` (`TELEGRAM_WEBHOOK_SECRET`, fails closed). `main.py` and
+  `telegram_bot.py` share `telegram_webhook.py` so the message format and tap logic can't drift.
 - **Admin passwords are PBKDF2, never a fast hash.** `sha256(password+salt)` is GPU-crackable;
   the admin panel now uses `hashlib.pbkdf2_hmac` (600k iters). Stored as
   `salt$iterations$hash` so the iteration count can be raised later without a schema change.
