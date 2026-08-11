@@ -160,7 +160,12 @@ Your job, in order:
    Then write:
    - "language": "nepali" or "english" -- whichever you chose above.
    - "full_article": a complete article (250-400 words) for the website, in the language you chose, using ONLY information present in the sources below -- do not add any fact not present in the sources. Style: SIMPLE, PROFESSIONAL, STANDARD -- clear and accessible wording, neutral tone, no jargon, no slang, no overly literary phrasing.
-   - "social_summary": a punchy 2-4 line summary for a social media caption, in the SAME language as full_article, same simple/professional/standard style, capturing the core fact.
+   - "social_summary": a SHORT-NEWS social caption (2-4 lines) in RONB/NEB style, in the SAME language as full_article:
+     * Conversational and punchy -- like a breaking-news alert to a friend. Lead with the single most striking fact, then 1-2 short supporting lines. State it plainly; no formal "according to reports" filler.
+     * Use ONE natural reaction emoji as a hook where it fits (e.g. 😮 😢 🇳🇵 ❤️ 🙏).
+     * END with hashtags: 3-5 relevant topic tags PLUS the brand tags #FactLineNP #NepalNews and #News.
+     * CREDIT THE SOURCE: mention which outlet(s) reported it (the source names are given in the Sources section), e.g. "Source: The Kathmandu Post".
+     * Captures the core fact in that casual short-news voice.
 3. If they are NOT the same event, or the sources contradict each other on a core fact, set is_genuinely_corroborated to false and explain why.
 
 Respond with ONLY a JSON object -- no markdown fences, no preamble -- in exactly this shape:
