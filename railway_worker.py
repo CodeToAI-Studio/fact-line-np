@@ -82,6 +82,11 @@ def _serve_health() -> None:
 
 
 def run_worker(kind: str) -> None:
+    # Health endpoint FIRST — before env checks / imports — so the container
+    # passes Railway's healthcheck and stays alive even if a later step fails,
+    # keeping the real error visible in logs instead of a silent crash-loop.
+    threading.Thread(target=_serve_health, daemon=True).start()
+
     if kind == "watch":
         _require(
             "DATABASE_URL",
@@ -100,9 +105,6 @@ def run_worker(kind: str) -> None:
             file=sys.stderr,
         )
         sys.exit(2)
-
-    # Health endpoint in a background daemon thread — never blocks the loop.
-    threading.Thread(target=_serve_health, daemon=True).start()
 
     print(f"[railway_worker] starting {kind} ...", flush=True)
     main()  # blocks forever (loops in the target script)
