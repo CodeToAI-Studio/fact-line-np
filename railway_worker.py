@@ -61,24 +61,14 @@ class _Health(BaseHTTPRequestHandler):
 
 
 def _serve_health() -> None:
-    """Serve 200 OK health responses from a background thread.
-
-    Binds the configured PORT (Railway-injected for web-type services) and
-    falls back to 80 (the default web port Railway probes) so the healthcheck
-    passes whether or not Railway injects $PORT.
-    """
-    bound_any = False
-    for port in sorted({PORT, 80}):
-        try:
-            server = ThreadingHTTPServer(("0.0.0.0", port), _Health)
-        except OSError as exc:
-            print(f"[railway_worker] could not bind health server on :{port}: {exc}", file=sys.stderr)
-            continue
-        bound_any = True
-        print(f"[railway_worker] health endpoint on http://0.0.0.0:{port}/", flush=True)
-        threading.Thread(target=server.serve_forever, daemon=True).start()
-    if not bound_any:
-        print("[railway_worker] WARNING: no health server bound — Railway may fail its healthcheck", file=sys.stderr)
+    """Serve 200 OK health responses from a background thread."""
+    try:
+        server = ThreadingHTTPServer(("0.0.0.0", PORT), _Health)
+    except Exception as exc:
+        print(f"[railway_worker] could not bind health server on :{PORT}: {exc}", file=sys.stderr)
+        return
+    print(f"[railway_worker] health endpoint on http://0.0.0.0:{PORT}/", flush=True)
+    server.serve_forever()
 
 
 def run_worker(kind: str) -> None:
