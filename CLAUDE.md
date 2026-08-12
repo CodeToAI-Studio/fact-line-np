@@ -909,6 +909,7 @@ the blocker below is resolved or the hard rules change, update `RESUME.md` too.
 - `models.py` — `platform_posts.post_id` FK now `ondelete="CASCADE"` (DB-level). The rejected/stale-pending post cleanup uses core bulk deletes, which bypass ORM `delete-orphan` cascades; the cascade must live in the database or those deletes raise `IntegrityError`.
 - `migrate_platform_posts_cascade.py` — created: idempotent ALTER of `platform_posts_post_id_fkey` to add `ON DELETE CASCADE` (probes `pg_constraint`, re-run is a no-op). Applied to the live Railway DB; verified orphans = 0 after the real retention run.
 - `retention.py` — corrected comments claiming platform rows "cascade via delete-orphan"; they cascade at the DB level.
+- `publisher.py` — IG publish failures are now `status="pending"` (retry next cycle) instead of `"failed"` forever. Reached 118 failed IG rows (54% of IG posts never posted) because `failed` was permanent and `run_publisher` only selects `pending`. Bounded by `MAX_IG_PUBLISHES_PER_RUN`. Reset the 118 historical failed IG rows to `pending`; verified IG container-create against the live API returns 200.
 
 ---
 
