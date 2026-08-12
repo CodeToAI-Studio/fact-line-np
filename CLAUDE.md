@@ -910,6 +910,7 @@ the blocker below is resolved or the hard rules change, update `RESUME.md` too.
 - `migrate_platform_posts_cascade.py` — created: idempotent ALTER of `platform_posts_post_id_fkey` to add `ON DELETE CASCADE` (probes `pg_constraint`, re-run is a no-op). Applied to the live Railway DB; verified orphans = 0 after the real retention run.
 - `retention.py` — corrected comments claiming platform rows "cascade via delete-orphan"; they cascade at the DB level.
 - `publisher.py` — IG publish failures are now `status="pending"` (retry next cycle) instead of `"failed"` forever. Reached 118 failed IG rows (54% of IG posts never posted) because `failed` was permanent and `run_publisher` only selects `pending`. Bounded by `MAX_IG_PUBLISHES_PER_RUN`. Reset the 118 historical failed IG rows to `pending`; verified IG container-create against the live API returns 200.
+- `templates/contact.html`, `privacy.html`, `terms.html`, `corrections.html`, `advertise.html` — created. Previously every footer/About-section link (`/web/contact`, `/web/privacy`, `/web/terms`, `/web/corrections`, `/web/advertise`) fell back to `about.html` (web_static_page falls back when the named template is missing), so they all showed the About page. Each now has real content in the same design; `contact.html` has a `#tip` anchor for the "News Tip" link.
 
 ---
 
