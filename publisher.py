@@ -347,9 +347,18 @@ def run_publisher(dry_run: bool = False):
                     ok_c, msg_c = comment_on_platform_post(pp.platform, platform_id, post)
                     print(f"  💬 {msg_c}")
                 elif success is False:
-                    # Real API error — mark failed so it doesn't retry every run.
-                    # Fix the underlying cause, then reset status to "pending" manually.
-                    pp.status = "failed"
+                    # A failed publish should be retried, not abandoned: Meta
+                    # IG errors (9004/9007 etc.) are usually transient — the
+                    # image fetch failed for a moment, a rate limit hit, or the
+                    # source image was momentarily unreachable. If we mark the
+                    # row "failed" permanently, the post is IG-dark forever and
+                    # the retry loop (which only selects "pending" rows) never
+                    # touches it again. Reset to "pending" instead so the next
+                    # cycle re-attempts it (bounded by MAX_IG_PUBLISHES_PER_RUN,
+                    # which prevents hammering the API). Rows that are stuck on
+                    # a permanent config problem (missing account/token) never
+                    # reach here — post_to_instagram returns early for those.
+                    pp.status = "pending"
                 # success is None → skipped (e.g. no image for IG); leave as "pending"
 
             processed_post_ids.add(post.id)
