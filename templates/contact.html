@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Contact Us — Fact Line NP{% endblock %}
+{% block content %}
+<div class="page-band"><div class="container"><h1>Contact Us</h1></div></div>
+<div class="page-wrap"><div class="container">
+  <div class="two-col">
+    <div style="background:var(--bg-card);border-radius:var(--radius-lg);padding:32px;box-shadow:var(--shadow-sm)">
+      <h2 style="font-family:var(--font-head);font-size:1.4rem;color:var(--fl-navy);margin-bottom:16px">Get in Touch</h2>
+      <p style="margin-bottom:16px;line-height:1.8">We welcome feedback, questions, and story ideas. For news tips, corrections, or general enquiries, reach out and our team will get back to you.</p>
+      <p style="line-height:1.8">Email: <a href="mailto:keshabupadhayaya5@gmail.com" style="color:var(--fl-red);font-weight:600">keshabupadhayaya5@gmail.com</a></p>
+      <h2 id="tip" style="font-family:var(--font-head);font-size:1.4rem;color:var(--fl-navy);margin:24px 0 16px">Send a News Tip</h2>
+      <p style="margin-bottom:16px;line-height:1.8">Have a story, document, or tip for our newsroom? Please include as much detail as you can — what happened, when, where, and any evidence or links. All tips are treated with confidentiality.</p>
+      <p style="line-height:1.8">Email your tip to: <a href="mailto:keshabupadhayaya5@gmail.com" style="color:var(--fl-red);font-weight:600">keshabupadhayaya5@gmail.com</a></p>
+    </div>
+    <aside class="sidebar">
+      <div class="sidebar-block">
+        <div class="sidebar-hd">Our Coverage</div>
+        {% for cat in all_categories %}
+        <a href="/web/category/{{ cat }}" style="display:block;padding:7px 0;font-size:.82rem;border-bottom:1px solid var(--border);color:var(--text-2)">{{ cat | title }}</a>
+        {% endfor %}
+      </div>
+    </aside>
+  </div>
+</div></div>
+{% endblock %}
