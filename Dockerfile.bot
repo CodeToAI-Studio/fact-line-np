@@ -3,4 +3,5 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
-CMD ["python", "railway_worker.py", "bot"]
+ENTRYPOINT ["python", "railway_worker.py"]
+CMD ["bot"]
