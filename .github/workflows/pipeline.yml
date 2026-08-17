@@ -20,11 +20,7 @@ name: Fact Line NP Pipeline
 # local-only.
 
 on:
-  schedule:
-    # Pipeline: every 15 minutes, offset to avoid the common minute marks.
-    - cron: "13,28,43,58 * * * *"
-    # Bot: every 5 minutes (GitHub minimum) so approvals are snappy.
-    - cron: "2,7,12,17,22,27,32,37,42,47,52,57 * * * *"
+  # Automatic runs are paused while the production Railway services are stopped.
   workflow_dispatch: {}   # manual "Run workflow" button
 
 # Never let the same job overlap itself (a slow run waits for the next tick).
